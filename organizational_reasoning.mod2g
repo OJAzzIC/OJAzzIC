@@ -1,0 +1,82 @@
+module orgReasoning(Agent) {
+	knowledge {
+		#import "org_reasoning.pl".
+	}
+	program[order=linear] {
+		%the linear order will mean try the first rules first, so effectively prioritising organizational objectives
+		
+		%NB org(Org, Objlist, Memberlist, Rolelist, CurrPlanID, BeliefSet ) Defines an organization 
+
+		
+		% if enacting role in an organization, and in scene, role is responsible for an active objective, agent belongs to an organization that is responsible for this objective, 
+		% in an active plan consider adopting that objective
+		if   % kk added agent(Agent,_) to next line
+			bel(agent(Agent,_), rea(Agent, Role, Scene), scene(Scene, Roles, Objectives), %KK added Roles, Objectives to scene() 
+			responsible_org(Org, Obj, Scene, Role), org(Org, OrgObjList, OrgAgentList, OrgRoleList, OrgPlanList,OrgBelList ), member(Agent, OrgAgentList),
+			% should I be checking that Objective is in Objectives list kk added next line 27-04-2014
+			member(Objective, Objectives),
+			plan(Plan, Objective, _, _), %KK added to check there is a plan including this landmark objective
+			member(Plan, OrgPlanList), % only select plans that are in plans for this organization
+			
+			%added kkeogh 29042014 next line commented out to see impact 17052014 esp wrt blockingbystanders
+			active_landmark(Objective),  %replaced with next line 17052014
+			%landmark(Objective,_,_), %swapped back to above line 25062014
+			% later will want to also check that this plan is active for an org that this agent is in
+			responsible_landmark(Objective, Scene, Role))  %Role is responsible for this Objective, also checks that landmark is active
+		then 
+			adopt(consider(Agent, Objective, Scene)) + insert(matchedOrgrea(Objective, Org)). 
+			% nb. if/when the objective is later adopted, then update plan allocation in org to link to agent
+		
+		% if enacting role in scene, is responsible and there is an active objective, in an active plan consider it 
+		% this is for when there are no organizations involved
+		if   % kk added agent(Agent,_) to next line
+			bel(agent(Agent,_), rea(Agent, Role, Scene), scene(Scene, Roles, Objectives), %KK added Roles, Objectives to scene() 
+			responsible( Obj, Scene, Role),  % Role is responsible for Obj in Scene
+			% should I be checking that Objective is in Objectives list kk added next line 27-04-2014
+			member(Objective, Objectives),
+			plan(Plan, Objective, _, _), %KK added to check there is a plan including this landmark objective
+			
+			%added kkeogh 29042014 next line commented out to see impact 17052014 esp wrt blockingbystanders
+			%active_landmark(Objective),  replaced with next line 17052014
+			landmark(Objective,_,_),
+			% later will want to also check that this plan is active for an org that this agent is in
+			responsible_landmark(Objective, Scene, Role))  %Role is responsible for this Objective, also checks that landmark is active
+		then 
+			adopt(consider(Agent, Objective, Scene)) + insert(matchedrea(Objective)). 
+					
+			
+		% added by KKEOGH matching capability to objective directly (not via role enacting or roles in an organization), 
+		% so an agent can show initiative to adopt this objective
+		% if an agent is capable of fulfilling all tasks in an objective (apart from role), then consider it.
+		if
+			bel(agent(Agent, CapabilityList), 
+			scene(Scene,_, Objectives), 
+			member(Obj, Objectives), 
+			landmark(Obj, _, TaskList),  
+			plan(Plan,Obj,_,_), % there is a plan including this landmark - not sure if this is necessary in case of showing intiative
+			active_landmark(Obj), % added kkeogh 29042014, probably should be there 03062014?  
+			capable_all(Agent, Obj)) % agent is capable of all tasks in this objective
+		then 
+			adopt (consider(Agent, Obj, Scene)) + insert(matchedcap(Obj)).
+			
+		% added by KKEOGH
+		% if this agent is capable of fulfilling some tasks in an objective (apart from role), consider doing those tasks
+		if
+			bel(agent(Agent, CapabilityList), 
+			scene(Scene,_, Objectives), 
+			member(Obj, Objectives), 
+			landmark(Obj, _, TaskList),  
+			plan(Plan,Obj,_,_), % there is a plan including this landmark
+			active_landmark(Obj), % added kkeogh 29042014  
+			capable_some(Agent, Obj)) % agent is capable of some tasks in this objective
+		then 
+			adopt (consider(Agent, Obj, Scene)) + insert(matchedsome(Obj)).  %need to create an org with others to fulfill Obj
+            % need to create a new version of reached to say have reached all objs I can fulfill			
+		
+				
+	}
+	%% KKEOGH need to think about adding policies for implementing preferences for considering tasks for agents 
+	% e.g. based on hierarchy of organizations agent belongs to
+	% e.g. based on prioritising coordination on concurrent tasks if asked by another agent in an organization to which agent belongs
+    % it could be that the consider goal includes a priority value that is then used in module considerOrgObjectives in aware_medic.goal and aware_officer.goal
+}

@@ -1,0 +1,23 @@
+module handleCommonPercepts {
+	program[order=linearall] {	
+		% when receive notification of a fangroup from an agent, insert beliefs regarding membership of fangroup and delete received message
+		forall bel(received(Sender, fangroup(N))) do insert(fangroup(Sender,N)) + delete(received(Sender, fangroup(N))).
+		
+		% always send location to others - fix to be able to build scenario in BW4T
+		if bel(at(P1), percept(at(P2))) then delete(at(P1)) + insert(at(P2)) + send(allother, myloc(P2)).
+	
+		%11082017 kkeogh added next 2 lines
+		if bel(percept(atBlock(B))) then insert(atBlock(B)).
+		if not(bel(percept(atBlock(B)))), bel(atBlock(B)) then delete (atBlock(B)).
+				
+		%09092017
+		forall bel(color(Ag,C,L)), bel(percept(in(L))), not(bel(percept(color(Ag,C)))) do insert(notcolor(Ag,C)). 
+		% as soon as messages of location are sent once, then delete the sent history
+		forall bel(sent(X,myloc(Y))) do delete(sent(X,myloc(Y))).
+		% update beliefs regarding location changes received from other agents
+		forall bel(received(Sender, myloc(P))) do {
+			if bel(at(Sender,Q)) then delete(at(Sender,Q)).
+			if true then insert(at(Sender,P)) + delete(received(Sender, myloc(P))).
+		}
+	}
+}

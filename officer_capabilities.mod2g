@@ -1,0 +1,180 @@
+%officer_capabilities.mod2g
+module findFight {  %find fights at the front of rooms (involving 2 agents from different fangroups)
+	program {
+		%if true then insert(lookingforafight).
+		% check all locations in front of rooms
+		if bel(front_room(FR), not(checked(FR))) then adopt(at(FR)).
+		
+		% objective completed fight found at locations listed (L) % modified next line KKEOGH 29042014, then changed back2-05-14
+		if not(bel(front_room(FR), not(checked(FR)))), bel(fightloc(_)) then insert(fightLocated).
+		%not working?if not(bel(front_room(FR), not(checked(FR)))), bel(fightloc(L)) then insert(fightLocated(L)).
+		
+		% a fight located does agent need to be at the room X to decide this? KK added at(X), not(fightloc(X) 15-05-2014 so that
+		% agents do not keep locating fights when they have already been found (so if agent already believes fight is at X, don't do this)
+		if bel(not(fightloc(X)), at(X), at(Ag1,X), at(Ag2,X), fangroup(Ag1,0), fangroup(Ag2,1), front_room(X)) then insert(fightloc(X)).
+	}
+}
+
+module stopFight {  % clear up a fight - two agents from different fangroups at a location of a fight
+	program {
+		%if true then insert(stoppingafight).
+		% if believe a fight is at location X, and officer is not at X yet, so adopt goal to go to X.
+		% if there are 2 fights, just focus on one of them, so only head to a fight if not already at another fight
+		if bel(not(at(Y), fightloc(Y)), fightloc(X), not(at(X))) then adopt(at(X)).
+		
+		% if believe this officer sent instructions to agent Ag to go to X and agent Ag is not at X yet, delete the sent message log
+		if bel(sent(Ag,imp(at(X))), not(at(Ag,X))) then delete(sent(Ag,imp(at(X)))).
+		
+		% if believe fight is at X, and this officer is at X and agent Ag is at X, send instructions to move agents away - to one of hallways
+		% depending on which fangroup they are in (in other words, break up the fight by separating the fan groups).
+		% should we be removing the fightloc(X) belief?
+		if bel(fightloc(X), at(X), at(Ag,X), fangroup(Ag, 0), not(sent(Ag,imp(at('LeftHallA'))))) then send(Ag, !at('LeftHallA')).
+		if bel(fightloc(X), at(X), at(Ag,X), fangroup(Ag, 1), not(sent(Ag,imp(at('RightHallA'))))) then send(Ag, !at('RightHallA')).
+		%next line added kk 15-05-2014 tthere was a fight at X, two agents were told to move
+		if bel(fightloc(X), fangroup(Ag, 0), sent(Ag,imp(at('LeftHallA'))), fangroup(Ag, 1), sent(Ag,imp(at('RightHallA')))) then insert(fightStopped(X)). 
+		
+		% if Agents in fangroups are no longer at fightloc X, so then have stopped fight, so insert belief fightStopped.
+		% if not(bel(fightloc(X), at(Ag,X), fangroup(Ag,_))) then insert(fightStopped).
+		% next line modified from above line kkeogh 03062014
+		if bel(fightloc(X), not(at(Ag,X)), fangroup(Ag,_)) then insert(fightStopped)+ insert(fightStopped(X))+ delete(fightloc(X)).
+	}
+}
+
+module removeBlockingBystanders {  % remove bystanders who are in (and therefore) blocking rooms
+	program {
+		%if true then insert(blockingBystandersbeingremoved).
+		%if a-goal(at(Ag,FR)), bel(at(FR)) then send(Ag, !at(FR)).  %KKchanged next line to say lefthallB not FR %changed back 29042014
+		% to say that we have a bystander at the front of a room FR, and officer is at FR, so tell the bystander to move on/away to LeftHallB
+		% KK added + insert(blockingBystanderRemoved(FR)) 15-05-2014
+		if a-goal(at(Ag,FR)), bel(at(FR)) then send(Ag, !at("LeftHallC")) + insert(blockingBystanderRemoved(FR)).
+		% if had a goal to get to the front of Room FR where a bystander is blocking (so bystander is also at FR, now we believe that 
+		% the bystander has moved to X elsewhere, so drop the goal to move them
+		if a-goal(at(FR),at(Ag,FR)), bel(at(Ag,X), X\=FR) then drop(at(FR), at(Ag,FR)).
+		% if believe that there is a bystander fangroup agent at a room, adopt goal to go to the front of that room and 
+		% adopt a goal that the bystander agent also moves to the Front of the Room  so I can go there to confront agent (there) to move on
+		if bel(at(Ag,R), room(R), fangroup(Ag,_), front_room(R,FR)) then adopt(at(FR), at(Ag,FR)).
+		
+		%why do we not have a test for removeBlockingBystanders to be done then an insert of belief to say so? KK 24-4-2014 
+		% next line added kkeogh29042014
+		%if not(bel(at(Ag,X), front_room(X), fangroup(Ag,_))) then insert(blockingBystanderRemoved).
+	}
+}
+
+module removeBlockingBystanders(L) {  % remove bystanders who are in (and therefore) blocking room L
+	program {
+		%if true then insert(blockingBystandersbeingremoved).
+		%if a-goal(at(Ag,FR)), bel(at(FR)) then send(Ag, !at(FR)).  %KKchanged next line to say lefthallB not FR %changed back 29042014
+		% to say that we have a bystander at the front of a room FR, and officer is at FR, so tell the bystander to move on/away to LeftHallB
+		% KK added + insert(blockingBystanderRemoved(FR)) 15-05-2014
+		if a-goal(at(Ag,FR)), bel(at(FR)) then send(Ag, !at("LeftHallB")) + insert(blockingBystanderRemoved(FR)).
+		% if had a goal to get to the front of Room FR where a bystander is blocking (so bystander is also at FR, now we believe that 
+		% the bystander has moved to X elsewhere, so drop the goal to move them
+		if a-goal(at(FR),at(Ag,FR)), bel(at(Ag,X), X\=FR) then drop(at(FR), at(Ag,FR)).
+		% if believe that there is a bystander fangroup agent at a room, adopt goal to go to the front of that room and 
+		% adopt a goal that the bystander agent also moves to the Front of the Room  so I can go there to confront agent (there) to move on
+		if bel(at(Ag,L), room(L), fangroup(Ag,_), front_room(L,FR)) then adopt(at(FR), at(Ag,FR)).
+		
+		%why do we not have a test for removeBlockingBystanders to be done then an insert of belief to say so? KK 24-4-2014 
+		% next line added kkeogh29042014
+		%if not(bel(at(Ag,X), front_room(X), fangroup(Ag,_))) then insert(blockingBystanderRemoved).
+	}
+}
+
+% help another agent with a virtual stretcher rescue, meet that agent at startLoc (front of a room), then move together to EndLoc
+module carry_stretcher(Injblock, OtherAgent, StartLoc, EndLoc) {
+	program  {
+		%05092016 add belief that I am acting in the role of a medic in the rescue scene for now, added next 2 lines
+		% not sure if I should do this next line, better to create adhocracy
+		% if bel(me(Me)), not(bel(rea(Me, medic, rescueInjuredSc))) then insert(rea(Me, medic, rescueInjuredSc) ).
+		%05092016 next line is to create temporary adhocracy: so orgMember(rescueOrg,Me), orgMember(rescueOrg,OtherAgent) will be true 08092016 added not(bel(rescued(Injblock))) and orgMember(resuceOrg,OtherAgent) on next line
+		if not(bel(myorg(rescueOrg), orgMember(rescueOrg,OtherAgent))), bel(me(Me)), not(bel(rescued(Injblock))) then  insert(org(rescueOrg,[rescueOnStretcherLmk],[Me,OtherAgent],[medic,officer],[injuredRescuedPlan],[myorg(rescueOrg)])).
+		% insert(orgMember(rescueOrg,Me)) + insert(orgMember(rescueOrg,OtherAgent)) 
+		
+		%org(Org, Objlist, Memberlist, Rolelist, CurrPlanID, BeliefSet ) Defines an organization 
+		
+		%05012017 added next 2 lines
+		%31032017 change so meet at frontdropzone if bel(together(StartLoc, Me, OtherAgent)), not(bel(rescued(Injblock))), not(bel(at('FrontDropZone'))) then goTo('FrontDropZone').
+		if bel(received(OtherAgent,onStretcher(Injblock))), not(bel(at('FrontDropZone'))) then goTo('FrontDropZone').
+		
+		%21072017 remove this line rely only on next line if bel(received(OtherAgent, at(OtherAgent, 'DropZone'))) then insert(rescued(Injblock)) + drop(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)).
+		
+		if bel(received(OtherAgent, rescued(Injblock))), bel(me(Me)) then insert(rescued(Injblock)) + drop(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)) +insert(avail(Me)).
+		
+		%31032017 added goTo(EndLoc)
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(onStretcher(Injblock)), bel(at(EndLoc), me(M)) then send(OtherAgent,at(M,EndLoc)) + delete(received(OtherAgent,imp(goTo(EndLoc)))) + goTo(EndLoc).
+		
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(onStretcher(Injblock), received(OtherAgent,imp(goTo('FrontDropZone')))), bel( me(M), together(StartLoc,OtherAgent,Me)) then goTo('FrontDropZone') + adopt(at('FrontDropZone')) +  insert(carrying_stretcher(Injblock)).
+		%31032017
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(onStretcher(Injblock), received(OtherAgent,imp(goTo('FrontDropZone')))) then goTo('FrontDropZone') + adopt(at('FrontDropZone')) +  insert(carrying_stretcher(Injblock)).
+		
+		
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(me(Me), front_room(EndLoc, FR), together(StartLoc,OtherAgent,Me)), bel(onStretcher(Injblock)) then goTo(FR) + drop(at(StartLoc)).
+		%31032017 perhaps need also to change FR to 'FrontDropZone' but should work
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(me(Me), front_room(EndLoc, FR)), bel(onStretcher(Injblock)) then goTo(FR).
+		
+		
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), not(bel(onStretcher(Injblock))), bel(received(OtherAgent,onStretcher(Injblock))) then insert(onStretcher(Injblock)) .
+		
+		
+		%31032017 changed StartLoc in together() to 'FrontDropZone'
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(me(Me), together(StartLoc,OtherAgent,Me)), bel(onStretcher(Injblock)) then goTo(EndLoc) + drop(at(StartLoc)).
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(me(Me), together('FrontDropZone',OtherAgent,Me)), bel(onStretcher(Injblock)) then goTo(EndLoc) + drop(at('FrontDropZone')).
+		
+		%13082016 added next 2 lines
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(together(StartLoc,OtherAgent,Me)), bel(received(OtherAgent,together(StartLoc,Me,OtherAgent))) then insert(onStretcher(Injblock)).
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), bel(together('FrontDropZone',OtherAgent,Me)), bel(received(OtherAgent,together('FrontDropZone',Me,OtherAgent))) then insert(onStretcher(Injblock)).
+		
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), a-goal(together(StartLoc,OtherAgent, Me)), bel(at(StartLoc)), bel(at(OtherAgent, StartLoc)), bel(me(Me)) then send(OtherAgent, together(StartLoc,OtherAgent, Me)) + insert(together(StartLoc,OtherAgent,Me)).
+		%31032017. 21072017 added + send(OtherAgent, at(Me,'FrontDropZone'))
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), a-goal(together('FrontDropZone',OtherAgent, Me)), bel(at('FrontDropZone')), bel(at(OtherAgent, 'FrontDropZone')), bel(me(Me)) then send(OtherAgent, together('FrontDropZone',OtherAgent, Me)) + send(OtherAgent, at(Me,'FrontDropZone')) + insert(together('FrontDropZone',OtherAgent,Me)).
+		
+		%31032017 next 2 rules to replace bottom 2 rules. 02042017 added not(bel(rescued(Injblock)))
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), not(bel(together('FrontDropZone',OtherAgent,Me))), bel(me(Me)), not(bel(rescued(Injblock))) then adopt (together('FrontDropZone',OtherAgent,Me)).
+		if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), a-goal(together(StartLoc, OtherAgent, Me)), bel(me(Me)),  not(bel(together('FrontDropZone',OtherAgent,Me))), not(bel(rescued(Injblock))) then adopt(at('FrontDropZone')).
+		
+		%31032017if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), not(bel(together(StartLoc,OtherAgent,Me))), bel(me(Me)) then adopt(together(StartLoc,OtherAgent, Me)).
+		%31032017 if a-goal(carryStretcher(Injblock,OtherAgent,StartLoc,EndLoc)), a-goal(together(StartLoc, OtherAgent, Me)), bel(me(Me)),  not(bel(together(StartLoc,OtherAgent,Me))) then adopt(at(StartLoc)).
+		if true then insert(carryingStretcher(Injblock)).
+
+	}
+}
+
+%29102016 copied module from medic_capabilities
+module locateInjured { 
+	program {
+		%checkedRoomsGoal is a private sub-goal in medic of injuredLocatedLmk it is not an organizational goal
+		% if have a goal to check all rooms and believe a room is not checked, then adopt a goal to check that room
+		%changed if to forall on next line
+		forall a-goal(checkedRoomsGoal), bel(room(R), not(checked(R))) do adopt(in(R)) + insert(needtocheckIn(R)).
+		%forall a-goal(checkedRoomsGoal), a-goal(in(R)), bel(checked(R)) do drop (in(R)). %17062014  
+		
+		%doesn't work: if bel(at(Ag,L), injured(Ag), checkedRooms) then insert(injuredLocated(L)). % modified by kkeogh (L) will this instantiate to all locations?
+		%if bel(at(Ag,L1), injured(Ag), room(L1), checked(L1)) then insert(injuredLocated(L1)). 
+		% modified by kkeogh (L1) will this instantiate to all locations? 17052014  20062014 added checked(L) 
+		% move this to aware_medic event module:
+		%forall bel(injured(Ag), at(Ag,L), checked(L)) do insert(injuredLocated(L))+ insert(injuredLocatedAt(Ag,L)).
+		
+			
+		% if have a goal to check all rooms and believe all rooms are checked, then insert belief that checkedRooms is true
+		% KK comment, not sure why we don't use reached(checkedRooms) ? is checkedRooms a different kind of objective
+		%KK modified next line to niclude not(bel(checkedRooms) 2-05-2014
+		%if a-goal(checkedRoomsGoal), not(bel(room(R), not(checked(R)))) then insert(checkedRooms).
+		% kk added drop(checkedRoomsGoal) to next line 19062014  
+		%22jul2015 move next line to awaremedic in event module
+		%if a-goal(checkedRoomsGoal), not(bel(room(R), not(checked(R)))), not(bel(checkedRooms)) then insert(checkedRooms) + drop (checkedRoomsGoal).
+		
+		% if I Agent Ag is injured and we have an at(Ag,_) rule, then we have the location for Ag, so have located injured
+		% not sure if this will be true for any injured agent or ALL injured agents? Would it be better to say that there is no agent Ag who is injured and we don't have a location for that agent?
+		% perhaps this is not important in this simulation as we actually know where all agents are, so the locate task really simplifies to visiting each room and tracking it has been virtually 'checked' 
+		% if have found at least one injured and have checked all rooms, injuredLocated is complete
+		%if bel(injuredLocated(A), checkedRooms) then insert(injuredLocated). %kk 18062014
+		
+		
+		if not(bel(checkedRooms)), not(a-goal(checkedRoomsGoal)) then adopt(checkedRoomsGoal).
+		%next line added KKEOGH 2-5-2014, removed 17052014
+		%if bel(checkedRooms) then drop(checkedRoomsGoal).
+		if true then insert(lookingforinjured).
+		
+
+	}
+}

@@ -1,0 +1,309 @@
+%aware_officer.goal
+%C:\Users\kkeogh\GoogleDriveMelbourneUni\Research\BW4T\GOAL\GOALagents\BW4T2\aware_officer.goal
+init module {	
+	knowledge {	
+		#import "org_instance.pl".
+
+		%30102016 added next lines about injured colors
+		% the following are used as convenience since the BW4T scenario is not perfect for our scenario 
+		injured(N) :- color(N,'Red',_).  % N is injured if N is coloured Red
+		seriouslyinjured(N) :- color(N,'Orange',_). % N is seriously injured if N is coloured Orange
+		at(N,X) :- color(N,_,X).         % N is at location X if color(N,_,X) is true
+		
+		
+		% a room has only one neighbour, exclude 'DropZone' as a Room
+		room(R) :- navpoint(_,R,_,_,[_]), R \= 'DropZone'.
+		
+		% a room has only one neighbour, so front_room is the only neighbour to a room
+		front_room(FR) :- navpoint(_,R,_,_,[FR]), R \= 'DropZone'.		
+		front_room(R,FR) :- navpoint(_,R,_,_,[FR]).
+	}
+	beliefs {
+		% scene/1: Active scene
+		scene(stopFightSc).
+		scene(rescueInjuredSc).
+		
+		% agent(AgId, CapabilityList)  23/10/2016 added at('DropZone') to capability list for medic1,2,3,4
+		agent(medic1, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic2, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic3, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic4, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic5, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]). %31032017
+		agent(officer1, [not(at(_,_)),fight(_)]).  %perhaps should add at(_) to capability list of officer 
+		agent(officer2, [not(at(_,_)),fight(_)]).
+		agent(officer3, [not(at(_,_)),fight(_)]).
+		
+		% rea(AgId, RId, SId)
+		rea(medic1, medic, rescueInjuredSc).
+		rea(medic2, medic, rescueInjuredSc).
+		% 13082016 rea(medic3, medic, rescueInjuredSc).
+		rea(medic3, medic, rescueInjuredSc). %comment this to turn off role medic for medic3 for testing initiative based on capabilities
+		rea(medic4, medic, rescueInjuredSc).
+		rea(medic5, medic, rescueInjuredSc). %31032017
+		rea(officer1, officer, stopFightSc).
+		rea(officer1, officer, rescueInjuredSc).
+		rea(officer2, officer, stopFightSc).
+		rea(officer2, officer, rescueInjuredSc).
+		rea(officer3, officer, stopFightSc).
+		rea(officer3, officer, rescueInjuredSc).
+	}
+	goals {
+	}
+	
+	%create beliefs based on percepts received
+	program {
+		forall bel( percept(navpoint(ID, Name, X, Y, Neighbours)) ) do insert( navpoint(ID, Name, X, Y, Neighbours) ).
+		forall bel( percept(state(State)) ) do insert( state(State) ).
+		if bel(percept(at(P))) then insert(at(P)).  %update beliefs about where I am located when received percept
+		%next 2 lines added 30102016 so officer can locate injured
+		forall bel(percept(color(N, C)), in(P)) do insert(color(N,C,P)) +insert(in(P)).		
+		if bel(percept(in(P))) then insert(in(P)) + insert(checked(P)).
+		%31032017 added next line
+		if a-goal(in(X)) then goTo(X).  % goal in(X) is created for locating injured
+	}
+	
+	actionspec {
+		goTo(Location) {   % only move if not already moving
+            pre { not(state(traveling)) }
+			post { true }
+		}
+	}
+}
+
+main module{
+	program {
+		if a-goal(at(X)) then goTo(X).  %prioritise moving task
+		
+		% priorities for goals in order : findFight then removeBlockingBystanders then stopFight 
+		%modified kkeogh 27052014 addd not(bel(fightLocated) and not(bel(fightStopped) to next 2 lines
+		if a-goal(fightLocatedGoal), not (bel(fightLocated)) then findFight.
+		if a-goal(blockingBystanderRemovedGoal(L)) then removeBlockingBystanders(L).  % if medic agent asks you to adopt goal to remove bystander in room L
+		if a-goal(fightStoppedGoal), not(bel(fightStopped)) then stopFight.
+		if a-goal(blockingBystanderRemovedGoal) then removeBlockingBystanders. 
+		if a-goal(carryStretcher(A,O,L,L2)), not(bel(rescued(A))) then carry_stretcher(A,O,L,L2).
+		
+		% if have a goal to consider what tasks might be adopted, then use considerOrgObjectives to consider Organizational Objectives in task selection
+		% this results in prioritising current goals under consideration to adopt one for action (see module below)
+		if a-goal(consider(Ag,Obj,Scene)) then considerOrgObjectives.
+		
+		% only consider organizational reasoning for myself. - adopt consider goals for possible tasks to do 
+		if bel(me(Me)) then insert(avail(Me)) + orgReasoning(Me).
+	}
+}
+
+% this module is setting policies for updating beliefs when landmark states are reached (objectives completed) and priorities for order of adopting goals
+module considerOrgObjectives {
+	program {
+		%08092016 added not(bel(rescued(A))) on next line 02042017 addeed bel(me(Me)) and changed consider(Me) instead of consider(A1)
+		if a-goal(consider(Me,carryStretcher(A,O,L,L2),Sc)), bel(me(Me)), not(a-goal(carryStretcher(A,O,L,L2))), not(bel(rescued(A))) then adopt(carryStretcher(A,O,L,L2)). 
+		% might need a policy to prioritise one if have multiple requests to carry stretcher
+		if a-goal(carryStretcher(A,O,L,L2)), not(bel(rescued(A))) then carry_stretcher(A,O,L,L2).
+		if a-goal(carryStretcher(A,O,L,L2)), bel(rescued(A)) then drop(carry_stretcher(A,O,L,L2)).
+		
+		%if a-goal(consider(A1,fightLocatedLmk,S2)), not(bel(front_room(FR), not(checked(FR)))), bel(fightloc(_)) then insert(reached(fightLocatedLmk)).
+		%next line modified from above line 20-05-2014 kk
+		if a-goal(consider(A1,fightLocatedLmk,S2)), bel(fightLocated) then insert(reached(fightLocatedLmk)).
+		%if a-goal(consider(A1,fightStoppedLmk,S2)), not(bel(fightloc(X), at(Ag,X), fangroup(Ag,_))) then insert(reached(fightStoppedLmk)).
+		%next line modified from above line 20-05-2014 kk
+		if a-goal(consider(A1,fightStoppedLmk,S2)), bel(fightStopped) then insert(reached(fightStoppedLmk)).
+		
+		% next 2 lines added kk 03062014, perhaps really should change beliefs to refer to specific location and change bottom lines of this module to not check not(bel(fight...))
+		%if bel(fightLocated, reached(fightLocatedLmk))) then delete(fightLocated). % so can then locate future fights?
+		%if bel(fightStopped, reached(fightLocatedLmk))) then delete(fightStopped).
+		
+		% considered completed when it does not believe any agents that are not enacting a role in the first-responders org are in a room
+		% kk added checked(R) to next line 27052014
+		% not working kk - if a-goal(consider(Ag,blockingBystanderRemovedLmk,S2)), not(bel(at(AgX,R), room(R), checked(R), \+ rea(AgX,_,_))) then insert(reached(blockingBystanderRemovedLmk)).
+		if bel(blockingBystanderRemoved(L)) then insert (reached(blockingBystanderRemoved(L))).
+		
+		
+		%09092016
+		if bel(reached(rescueOnStretcherLmk)), a-goal(consider(O,carryStretcher(Ag,O,S,D),rescueInjuredSc)) then drop (consider(O,carryStretcher(Ag,O,S,D))).
+		%if bel(reached(rescueOnStretcherLmk)), a-goal(carryStretcher(Ag,O,S,D)) then drop(a-goal(carryStretcher(Ag,O,S,D))).
+		
+		%drop blockingBystanderRemovedLmk as a goal when done, so that it can be created in future if needbe		
+		if bel(reached(blockingBystanderRemovedLmk)), a-goal(blockingBystanderRemovedLmk) then drop(blockingBystanderRemovedLmk).
+		
+		%08092016  02042017 added + goTo('FrontRoomA1')  changed A1 to M and added me(M)
+		if a-goal(consider(M,carryStretcher(A,O,L,L2),Sc)), bel(rescued(A), me(M)) then drop(consider(M,carryStretcher(A,O,L,L2),Sc)) + drop(together('FrontDropZone',O,M))+ goTo('FrontRoomA1').
+		
+		% next rules to enable officer to show initiative and select the blockingbystander landmark without being asked and do it all
+		% if the blockingbystanderRemovedLmk landmark is a goal as a landmark, then need to recognise when it is reached.
+		%if a-goal(blockingBystanderRemovedLmk), bel(reached(blockingBystanderRemoved(Y))), not(bel(at(Ag,X), fangroup(Ag,_), room(X))) then insert(reached(blockingBystanderRemovedLmk)).
+
+		%29102016 enable officer to locateInjured. 1/11/2016 added not(bel(reached(injuredLocatedLmk)))
+		if a-goal(injuredLocatedGoal), bel(checkedRooms), not(bel(reached(injuredLocatedLmk))) then insert(reached(injuredLocatedLmk)).
+		if a-goal(injuredLocatedGoal), not(bel(checkedRooms)) then locateInjured.
+		
+		% adopt goals in this order: fightLocated first, then fightStopped, then blockingBystanderRemoved
+		% only consider goals that have been identified by creation of a consider goal already 
+		% consider goals (adopted in orgReasoning(Agent)) based on potential possible goals that apply based on scene, active objectives and my responsibilities.
+		%kk added not(bel(fightLocated) and not(bel(fightStopped) to next 2 lines 20-05-2014 not sure if this is good idea in case have a future fight
+		if a-goal(consider(A1,fightLocatedLmk,S2)), not(bel(fightLocated)) then adopt(fightLocatedGoal).
+		if a-goal(consider(A1,fightStoppedLmk,S2)), not(bel(fightstopped)) then adopt(fightStoppedGoal).
+		if a-goal(consider(A1,blockingBystanderRemovedLmk,S2)) then adopt(blockingBystanderRemovedGoal). % + drop(consider(A1,blockingBystanderRemovedLmk,S2)).
+		%16062016 think next line needs adding
+		if a-goal(consider(A1,blockingBystanderRemovedGoal(R),S2)) then adopt(blockingBystanderRemovedGoal(R)).
+		%29102016 enable officer to locateInjured
+		if a-goal(consider(A1,injuredLocatedLmk,S2)) then adopt(injuredLocatedGoal).
+		%01042017
+		if true then goTo('FrontRoomA1').		
+	}
+}
+
+%31032017 added module shareAdoptedSP(Ag, A)
+module shareAdoptedSP(Ag, A) {
+program {
+	if bel(aSP(A,L,O,M)), a-goal(aSP(A)), bel(onStretcher(A)), not(bel(informed(Ag,rescuing(A))))  then send(Ag, rescuing(A)) + insert(informed(Ag,rescuing(A))) + insert(rescuing(A,M)).
+}
+}
+
+%toggle on/off
+module shareNobeliefs(Ag) {  %03012017 created to effect no sharing of beliefs
+program {	if true then insert(nobeliefsShared(Ag)). }
+}  
+
+module sharebeliefs(Ag) {  % 03012017 changed name to turn off sharing of beliefs 
+program {    %06042016 separated out not(bel(sent() on next 2 lines
+			forall bel(color(N,C,X)), not(bel(sent(Ag,color(N,C,X)))) do send(Ag, color(N,C,X)).	
+			forall bel(checked(Y)), not(bel(sent(Ag,checked(Y)))) do send(Ag, checked(Y)).
+			
+			% create explicit belief about location of injured 10062014, share this belief with other agents responsible
+			%forall bel(color(A,'Red',L), checked(L)) do insert(injuredLocatedAt(A,L))+ send(Ag, injuredLocatedAt(A,L)). %%kk 20062014
+			
+			%08092016 added injured(A) to next 2 rules  01082017 added not(bel(sent(Ag,injuredLocatedAt(A,L))))
+			forall bel(injuredLocatedAt(A,L), injured(A)), not(bel(sent(Ag,injuredLocatedAt(A,L)))) do send(Ag,injuredLocatedAt(A,L)). %kk 20062014
+			forall bel(injuredLocated(A), injured(A)), not(bel(sent(Ag,injuredLocated(A)))) do send(Ag, injuredLocated(A)). %kk 20062014
+			
+		}
+}
+
+event module{
+	program{
+	
+	    %02042017
+		if bel(received(O,imp(goTo(L)))) then goTo(L) + delete(received(O,imp(goTo(L)))).
+		
+		% if have achieved objectives for a goal, the send message to all other agents involved in this scene that objective is reached 
+		% and drop the goal to consider that objective
+		forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do {
+			%21112016 comment out next line to turn off shared beliefs
+			forall bel(me(Me), rea(REA,_,Sc), REA\=Me) do send(REA, :reached(Objective, Sc)). 	
+			if true then drop(consider(Ag,Objective,Sc)).
+		}
+		% also drop consider goals for completed objectives that might not be involved in a scene? so not covered by first statement ?
+		forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do drop(consider(Ag,Objective,Sc)).
+		
+		% if receive messagefrom another agentthat an objective in a scene I am involved in, has been reached, then update beliefs to say it is reached
+		if bel(received(Ag, reached(Objective, Scene)), me(Me), rea(Me, _, Scene)) then insert(reached(Objective)).
+		
+		%04022017 kill outdated together goal and plan to move away from frontDropZone
+		if a-goal(together('FrontDropZone',M,Me)), bel(me(Me)), not(a-goal(carryStretcher(Ag,M,L,'FrontDropZone'))) then drop(together('FrontDropZone',M,Me)) + adopt(at('FrontRoomB1')).
+		
+		% if receive a message with a request to accept a delegated task then consider this task and delete the message 
+		% KKEOGH comment - may want to somehow identify this task as a delegated task to prioritise later? (perhaps will need a way of identifying
+		% tasks further as delegated, requested, which org they belong to, and also if they are concurrent - ie. another agent is waiting for help)
+		% (not sure? why deleting a reached(Objective) here?.. so that it can fire again in future)
+		
+		%21072017 added +insert(notavail(Me)) to next rules
+		% if another agent delates an objective to me and I believe they can delegate this obj to me, 02042017 changed Ag to Me in considert(Me...) in next 2 rules
+		if bel(received(Ag, imp(delegated(Objective))), me(Me), delegate(Ag,Objective,Sc,Me,_)), not(a-goal(consider(Ag,Objective,Sc))) then adopt(consider(Me,Objective,Sc)) + delete(received(Ag, imp(delegated(Objective)))) + delete(reached(Objective)) +insert(adoptedConsiderDelegatedTask(Objective,Sc)) +insert(notavail(Me)).
+		
+		% if another agent delates an objective to me and I believe they can delegate another obj to me and I am available 
+		if bel(received(Ag, imp(delegated(Objective))), me(Me), delegate(Ag,Obj,Sc,Me,_)), not(a-goal(consider(Ag,Objective,Sc))), bel(avail(Me)) then adopt(consider(Me,Objective,Sc)) + delete(received(Ag, imp(delegated(Objective)))) + delete(reached(Objective)) +insert(adoptedConsiderDelegatedTaskk(Objective,Sc))+insert(notavail(Me)) +delete(avail(Me)) + send(Ag,Objective).
+		if bel(received(Ag, imp(delegated(Objective))), me(Me), delegate(Ag,Obj,Sc,Me,_)), bel(notavail(Me)) then send(Ag,notavail(Me)).
+		
+		% update beliefs based on new percepts
+		%31032017 move this line to end of module if true then handleCommonPercepts.
+		
+		
+		%05092016
+		if bel(received(O,rescued(I)), onStretcher(I))  then insert(rescued(I)) + delete(onStretcher(I)).
+		%08092016 if receive notification of rescue from an agent in org with me, then trust that and update beliefs
+		if bel(received(O,rescued(I)), myorg(rescueOrg), orgMember(rescueOrg,O)) then insert(rescued(I)).
+		% if have existing goal to carry stretcher but rescue is complete, drop the goal. 09092016 uncommented next line
+		if a-goal(carryStretcher(I,O,S,D)), bel(rescued(I)) then drop (carryStretcher(I,O,S,D)).
+		
+		% update beliefs based on new state 
+		if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).		if bel(percept(in(P))) then insert(in(P)) + insert(checked(P)).
+		if bel(percept(not(in(P)))) then delete(in(P)).
+		
+		% if at a location, then consider it checked
+		if bel(at(X)) then insert(checked(X)).
+		forall bel(received(Ag, checked(X))) do insert(checked(X)) + delete(received(Ag, checked(X))). 
+		
+		forall a-goal(injuredLocatedGoal), a-goal(in(Y)), bel(checked(Y)) do drop(in(Y)). 
+		
+		if a-goal(checkedRoomsGoal), not(bel(room(R), not(checked(R)))), not(bel(checkedRooms)) then insert(checkedRooms) + drop (checkedRoomsGoal).
+		if a-goal(checkedRoomsGoal), bel(checkedRooms) then drop (checkedRoomsGoal).
+		
+		forall a-goal(injuredLocatedGoal), bel(checked(R), room(R)) do insert(checkedForInjured(R)).
+		
+		if bel(reached(injuredLocatedLmk)), a-goal(injuredLocatedGoal) then drop (injuredLocatedGoal).
+		
+		% debug attempt to avoid collisions added kkeogh 06052014	
+		%if bel(state(Collided), not(at("RightHallA"))) then goTo("RightHallA"). next lines modified 15-05-2014 KK
+		%if bel(state(Collided), a-goal(at("RightHallA"))) then drop(at("RightHallA")) + delete(state(Collided)).
+		%if bel(state(Collided), not(at("RightHallA"))) then adopt (at("RightHallA"))+ delete (state(Collided)). 
+		
+		if a-goal(consider(A1,carryStretcher(A,O,L,L2),Sc)), bel(rescued(A)),  bel(me(Me)) then drop(consider(A1,carryStretcher(A,O,L,L2),Sc)) +insert(avail(Me)).
+		%21072017 added insert(avail(Me)) to next line
+		if a-goal(carryStretcher(A,O,L,L2)), bel(rescued(A), me(Me)) then drop(carry_stretcher(A,O,L,L2)) + insert(avail(Me)) + delete(notavail(Me)).
+		
+		%following lines copied from aware_medic 30102016
+		%update my own beliefs about injured
+		%update beliefs
+		forall bel(injured(Ag), at(Ag,L), checked(L)) do  
+			insert(injuredLocated(Ag)) + insert(injuredLocatedAt(Ag,L)). 
+		
+		%08092016 update own beliefs about injuredLocated
+		forall bel(injuredLocated(Ag)), not(bel(injured(Ag))), not(bel(seriouslyinjured(Ag))) do delete (injuredLocated(Ag)).
+		forall bel(injuredLocatedAt(Ag,L)), not(bel(injured(Ag))), not(bel(seriouslyinjured(Ag))) do delete (injuredLocatedAt(Ag,L)).
+		
+		%06052016
+		forall bel(seriouslyinjured(Ag), at(Ag,L), checked(L)) do  
+			insert(injuredLocated(Ag)) + insert(injuredLocatedAt(Ag,L)).
+			
+		
+		%following lines copied from aware_medic 30102016
+		forall bel(received(Ag, injuredLocatedAt(Ag, X))) do 
+			insert(injuredLocatedAt(Ag,X)) +
+			delete(received(Ag, injuredLocatedAt(Ag,X))). 
+			
+		forall bel(received(Ag, injuredLocated(X))) do  
+			insert(injuredLocated(X)) +  
+			delete(received(Ag, injuredLocated(X))). 
+			
+		
+		forall bel(received(Ag, color(N,C,P))) do   
+			insert(color(N,C,P)) + 
+			delete(received(Ag, color(N,C,P))). 
+			
+
+		
+		%july2017 added avail(Me)
+		if a-goal(checkedRoomsGoal), not(bel(room(R), not(checked(R)))), not(bel(checkedRooms)), bel(me(Me)) then insert(checkedRooms) + insert(avail(Me)) + drop (checkedRoomsGoal).
+		if a-goal(checkedRoomsGoal), bel((checkedRooms), me(Me)) then drop (checkedRoomsGoal) +insert(avail(Me)). %27072015
+		
+		%30102016 share beliefs about located injured with others in roles responsible for locating injured in my organizations
+		%21112016 comment out next line to turn off shared beliefs
+		forall a-goal(consider(Me,injuredLocatedLmk,Sc)), bel(me(Me), rea(Ag,R,Sc), responsible(injuredLocatedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do sharebeliefs(Ag).
+		
+		%23072017 update status of availability to all agents in scene rescueInjuredSc 
+		%23072017 should only agents responsible get this message or all agents in scene? rea(Ag,R,rescueInjuredSc), responsible(injuredRescuedLmk,rescueInjuredSc,R), Ag\=Me
+		forall bel(rea(Ag,R,rescueInjuredSc), me(Me), avail(Me)) do send(Ag,avail(Me)). 
+		forall bel(rea(Ag,R,rescueInjuredSc), me(Me), notavail(Me)) do send(Ag,notavail(Me)). 
+		
+		%21072017 update status of availability to all agents in my org responsible for injuredRescuedLmk when considering Lmk
+		forall a-goal(consider(Me,injuredRescuedLmk,Sc)), bel(notavail(Me), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do send(Ag,notavail(Me)).
+		forall a-goal(consider(Me,injuredRescuedLmk,Sc)), bel(avail(Me), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do send(Ag,avail(Me)).
+		
+		%31032017 moved this line down to here
+		if true then handleCommonPercepts.
+		
+	}
+}
+
+#import "organizational_reasoning.mod2g".
+#import "officer_capabilities.mod2g".
+#import "common.mod2g".

@@ -1,0 +1,70 @@
+%bystander.goal
+init module {
+	knowledge {
+		% fangroup based on bot name
+		fangroup(0) :- me(Ag),sub_string(Ag,0,_,_,'feye').
+		fangroup(1) :- me(Ag),sub_string(Ag,0,_,_,'ajax').
+		
+		% a room has only one neighbour
+		room(R) :- navpoint(_,R,_,_,[_]), R \= 'DropZone'.
+		
+		% a room has only one neighbour, so front_room is the only neighbour to a room
+		front_room(R,FR) :- navpoint(_,R,_,_,[FR]).
+	}
+	
+	beliefs{
+	}
+	program {
+		forall bel( percept(navpoint(ID, Name, X, Y, Neighbours)) ) do insert( navpoint(ID, Name, X, Y, Neighbours) ).
+		forall bel( percept(state(State)) ) do insert( state(State) ).
+		if bel(percept(at(P))) then insert(at(P)).
+		
+		% broadcast fangroup for convenience, since environment does not support this
+		if bel(fangroup(N)) then send(allother, fangroup(N)).
+	}
+	
+		
+	actionspec {
+		goTo(Location) {
+            pre { not(state(traveling)) }
+			post { true }
+		}
+	}
+
+}
+	
+main module{	
+	program{		
+		if a-goal(at(X)) then goTo(X).
+		if a-goal(in(X)), bel(not(occupied(X))) then goTo(X).
+		if a-goal(in(X)), bel(occupied(X)) then drop(in(X)).
+		
+		if bel(not(done), fangroup(0), room(R), front_room(R,FR), at(FR), at(Ag, FR), not(fangroup(Ag,_))) then adopt(in(R)) + insert(done).
+	}
+}
+
+
+event module {
+	program {
+		%01052016 if bel(received(Sender, imp(at(X))), at(X)) then delete(received(Sender, imp(at(X)))).
+		%01052016 if bel(received(Sender, imp(at(X)))) then adopt(at(X)) + delete(received(Sender, imp(at(X)))).
+		%01052016 added next line to replace above 2 lines
+		%08052016 added delete(received(Sender ..) to lines 53 and 55.
+		if bel(received(Sender, imp(at(X)))), not(bel(at(X))), not(a-goal(at(Y))) then goTo(X) + adopt(at(X)) + delete(received(Sender, imp(at(X)))).
+		if bel(received(Sender, imp(at(X)))), bel(at(X)) then delete(received(Sender, imp(at(X)))).
+		if bel(received(Sender, imp(goTo(X)))), not(bel(at(X))), not(a-goal(at(Y))) then goTo(X) + adopt(at(X)) + delete(received(Sender, imp(goTo(X)))).
+		if bel(received(Sender, imp(goTo(X)))), bel(at(X)) then delete(received(Sender, imp(goTo(X)))).
+		
+		if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).
+
+		if bel(percept(not(occupied(R))) ) then delete( occupied(R) ).
+		if bel(percept(occupied(R)) ) then insert( occupied(R) ).
+
+		if bel(percept(in(P))) then insert(in(P)).
+		if bel(percept(not(in(P)))) then delete(in(P)).
+		if a-goal(at(X)), bel(at(X)) then drop(at(X)).
+		if true then handleCommonPercepts.
+	}
+}
+
+#import "common.mod2g".

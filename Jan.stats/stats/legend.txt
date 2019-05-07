@@ -1,0 +1,41 @@
+organizational structure index
+higher the number, more organizational structure, 
+0 - no organization
+1 - organization but not sharing beliefs or completion
+1.5 - organization but not sharing beliefs or completion, but one medic in org with officer, so sharing indirectly completion
+2 - organization but not sharing beliefs, yes sharing completion
+3 - organization but one medic not in org, that medic is capable of stretcher rescue
+3.5 - organization but one medic not in org, that medic is in role of a medic
+4 - organization sharing beliefs, sharing completion
+5 - organization sharing beliefs, sharing completion, allowing delegation stretcher handover
+
+no. medics
+3 - 3 medic agents
+4 - 4 medic agents
+
+task complexity index based on no stretcher rescues
+Keogh:
+0 - red blocks only
+1 - red and orange blocks 2 of each
+
+success rate 5
+% of runs that successfully completed
+
+awareness 
+1 - all agents aware of successful completion
+0 - not all agents aware of completion status
+
+
+
+notes re: summary stats .csv file format
+organizational structure index	
+task complexity index	
+no medics	
+success rate %	
+awareness 	
+time to complete	
+efficiency (total no. rooms entered)	
+communication (total no. messages)	
+partial success (P)	
+unaware (U)
+

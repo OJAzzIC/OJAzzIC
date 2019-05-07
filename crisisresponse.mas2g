@@ -1,0 +1,45 @@
+%crisisresponse.mas2g
+environment{
+	env= "environments\BW4T2\BW4TClient.jar" .
+	init = [ clientip ="localhost", clientport="2000", serverip = "localhost", serverport = "8000", agentcount = "14", humancount = "0", launchgui = "true", goal = "true"] .
+}
+
+agentfiles{
+	"unaware_officer.goal" [name = unaware_officer].
+	"bystander.goal" [name = bystander].
+	"middleware.goal" [name = middleware].
+	"unaware_medic.goal" [name = unaware_medic].
+	"aware_officer.goal" [name = aware_officer].
+	"aware_medic.goal" [name = aware_medic].
+}
+
+launchpolicy {	
+	%launch aware medical agents
+	when [name=medic1]@env do launch *:aware_medic.
+	when [name=medic2]@env do launch *:aware_medic.
+	when [name=medic3]@env do launch *:aware_medic.
+	when [name=medic4]@env do launch *:aware_medic.
+	when [name=medic5]@env do launch *:aware_medic.
+ 	
+	% launch unaware medical agents
+	%when [name=medic1]@env do launch *:unaware_medic.
+	%when [name=medic2]@env do launch *:unaware_medic.
+	%when [name=medic3]@env do launch *:unaware_medic.
+	
+	% launch unaware officer agents
+	when [name=officer1]@env do launch *:aware_officer.
+	when [name=officer2]@env do launch *:aware_officer.
+	when [name=officer3]@env do launch *:aware_officer.
+	
+	% launch aware officer agents
+	%when [name=officer1]@env do launch *:unaware_officer.
+	%when [name=officer2]@env do launch *:unaware_officer.
+	%when [name=officer3]@env do launch *:unaware_officer.
+	
+	% any remaining agents launch as bystander agents
+	when entity@env do launch *:bystander.
+	
+	% launch middleware agent for coordination of unaware agents
+	%launch middleware:middleware.
+}
+

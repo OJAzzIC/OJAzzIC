@@ -1,0 +1,122 @@
+%unaware_medic.goal
+init module {
+	knowledge {
+		% the following are used as convenience since the BW4T scenario is not perfect for our scenario 
+		injured(N) :- color(N,'Red',_).
+		at(N,X) :- color(N,_,X).
+		
+		% a room has only one neighbour
+		room(R) :- navpoint(_,R,_,_,[_]), R \= 'DropZone'.
+		% a room has only one neighbour, so front_room is the only neighbour to a room
+		front_room(FR) :- navpoint(_,R,_,_,[FR]), R \= 'DropZone'.		
+		front_room(R,FR) :- navpoint(_,R,_,_,[FR]).
+
+	}
+	beliefs {  %unware medic has no initial beliefs regarding organization and capabilities of other agents
+	}
+	
+	program {
+		forall bel( percept(navpoint(ID, Name, X, Y, Neighbours)) ) do insert( navpoint(ID, Name, X, Y, Neighbours) ).
+		forall bel( percept(state(State)) ) do insert( state(State) ).
+		if bel(percept(at(P))) then insert(at(P)).
+		
+		% broadcast agent type for convenience, since environment does not support this
+		if true then send(allother, medic).
+	}
+			
+	actionspec {
+		goTo(Location) {
+            pre { not(state(traveling)) }   
+			post { true }
+		}
+		goToBlock(Block) {
+			pre { not(state(traveling)), color(Block,_,L), in(L) }
+			post { true }
+		}
+		pickUp {
+			pre { not(holding(_)), atBlock(X), color(X,C,R) }
+			post { not(color(X,C,R)) }
+		}
+		putDown {
+			pre { holding(_) }
+			post { true }
+		}
+	}
+}
+
+main module{
+	program{
+		% if am holding a block in the dropzone, then put it down (rescue completed!)
+		if bel(holding(_), in ('DropZone')) then putDown. % added kkeogh (this is in aware medic)
+		
+		if a-goal(atBlock(X)), bel(not(holding(_)), at(X,R), in(R)) then goToBlock(X). %in the room, now go to block
+		if a-goal(atBlock(X)), bel(at(X,R)), not(a-goal(in(R))) then adopt(in(R)).	%  this line is commented out in aware medic code??
+		if a-goal(holding(X)), bel(atBlock(X)) then pickUp. % at the block, so pick it up
+		if a-goal(holding(X)) then adopt(atBlock(X)).  % create goal to be at the block 
+		% this next line is in aware medic, missing from here: (should it be here?) added in by kkeogh 06052014
+		if a-goal(holding(X)), bel(at(X,R)) then adopt(atBlock(X),in(R)).  % create goal to be at the block and in the room
+		if a-goal(at(X)) then goTo(X). % enact goal to go to location X
+		if a-goal(in(X), holding(B)), bel(holding(B)) then goTo(X). % goal to be holding block in room X have block now move to location X
+		if a-goal(in(X)), bel(X \= 'DropZone', not(holding(_)), not(occupied(X))) then goTo(X).	% goal to be in room X, believe room X is not occupied, so go there		
+
+		%if bel(state(Collided), not(at("RightHallB"))) then goTo("RightHallB"). % debug attempt to avoid collisions added kkeogh 06052014		
+        
+		%if have new belief that have checked a room, tell middleware this, kk moved this line 20052015 and added check for not sent...
+		%send progress message on each room checked to middleware
+		if a-goal(injuredLocatedLmk), bel(checked(R), room(R), not(sent(middleware, checkedForInjured(R)))) then send(middleware, :checkedForInjured(R)).
+		
+		if a-goal(injuredLocatedLmk), not(a-goal(injuredLocatedGoal)) then adopt(injuredLocatedGoal). % medic capabilities are defined in terms of Goal
+		%enact goals in this order: locateInjured, then rescueInjured. KK added not() to these 2 lines 20-05-2014
+		if a-goal(injuredLocatedLmk), not(bel(checkedRooms)) then locateInjured.
+		if a-goal(injuredRescuedLmk), bel(injuredLocatedAt(_,_)) then rescueInjured.
+		if a-goal(injuredRescuedLmk), bel(injuredRescued) then insert(reached(injuredRescuedLmk)).
+		
+		% when I believe objectives are completed, but haven't sent message to middleware, then inform middleware that they are reached.
+		if bel(checkedRooms, not(sent(middleware, reached(injuredLocatedLmk)))) then send(middleware, :reached(injuredLocatedLmk)).
+		if bel(reached(injuredRescuedLmk), not(sent(middleware, reached(injuredRescuedLmk)))) then send(middleware, :reached(injuredRescuedLmk)).
+		% next 2 line added to think about kkeogh 29042014
+		%if bel(haveremovedBlockingBystander, not(sent(middleware, reached(haveremovedBlockingBystander)))) then send(middleware,:haveremovedblockingBystander).
+		%if bel(belremovedallBlockingBystanders, not (sent(middleware,reached(BlockingBystandersRemoved)))) then send(middleware,:reached(BlockingBystandersRemoved)).
+		
+		% if I am not already waiting for a task, send a message requesting a task from middleware and set belief to waiting.
+		if bel(not(waiting)) then send(middleware, ?task) + insert(waiting).
+	}
+}
+
+event module {
+	program {
+		% receive messages from middleware, adopt any tasks allocated, if no task given, remove waiting belief
+		if bel(received(middleware, imp(do(X)))) then delete(waiting).		
+		if bel(received(middleware, imp(do(injuredLocatedLmk)))) then adopt(injuredLocatedLmk).% + delete(received(middleware, do(injuredLocatedLmk))).
+		if bel(received(middleware, imp(do(injuredRescuedLmk)))) then adopt(injuredRescuedLmk).% + delete(received(middleware, do(injuredRescuedLmk))).
+		if bel(received(middleware, noTask)) then delete(waiting) + delete(received(middleware, noTask)).
+		
+		%following line of code is in aware medic, in case of unaware medic, will also be told by middleware 
+		forall bel(injured(Ag), at(Ag,L), checked(L)) do insert(injuredLocated(Ag))+ insert(injuredLocatedAt(Ag,L)). %update beliefs about injured agents I have found
+		forall bel(injuredLocatedAt(Ag,L)) do send(middleware, injuredLocatedAt(Ag,L)). %tell middleware about injured agents I have found
+		forall bel(received(middleware, injuredLocatedAt(Ag,L))) do insert(injuredLcoatedAt(Ag,L)). %receive info from middleware about injured agents others have found
+		
+		% receive percepts
+		if true then handleCommonPercepts.
+		
+		% update beliefs about state
+		if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).
+		if bel(percept(not(occupied(R))) ) then delete( occupied(R) ).
+		if bel(percept(occupied(R)) ) then insert( occupied(R) ).
+		
+		if bel(percept(holding(B))) then insert(holding(B)).
+		if bel(percept(not(holding(B)))) then delete(holding(B)).
+		
+		forall bel(percept(color(N, C)), in(P)) do insert(color(N,C,P)).
+		
+		if bel(percept(in(P))) then insert(in(P)) + insert(checked(P)).
+		if bel(percept(not(in(P)))) then delete(in(P)).
+		
+		if bel(percept(atBlock(B))) then insert(atBlock(B)).
+		if bel(percept(not(atBlock(B)))) then delete(atBlock(B)).
+
+	}
+}
+
+#import "medic_capabilities.mod2g".
+#import "common.mod2g".

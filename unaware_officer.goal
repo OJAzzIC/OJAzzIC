@@ -1,0 +1,96 @@
+%unaware_officer.goal
+init module {	
+	knowledge {			
+		% a room has only one neighbour
+		room(R) :- navpoint(_,R,_,_,[_]), R \= 'DropZone'.
+		
+		% a room has only one neighbour, so front_room is the only neighbour to a room
+		front_room(FR) :- navpoint(_,R,_,_,[FR]), R \= 'DropZone'.		
+		front_room(R,FR) :- navpoint(_,R,_,_,[FR]).
+	}	
+	beliefs {
+	}	
+	goals {
+	}
+	program {
+		%update beliefs based on new percepts received
+		forall bel( percept(navpoint(ID, Name, X, Y, Neighbours)) ) do insert( navpoint(ID, Name, X, Y, Neighbours) ).
+		forall bel( percept(state(State)) ) do insert( state(State) ).
+		if bel(percept(at(P))) then insert(at(P)).
+		
+		% broadcast agent type for convenience, since environment does not support this
+		if true then send(allother, officer).
+	}
+		
+	actionspec {
+		goTo(Location) {
+            pre { not(state(traveling)) }
+			post { true }
+		}
+	}
+}
+
+main module{
+	program {
+		% kkeogh thought about adding next line, so if an agent has completed task Obj for which it had a goal, it can now drop the goal
+		% however, this may happend automatically? so might not be necessary? ... let's wait and see...seems not to need it.
+		%if bel((Obj), a-goal(Obj) then  drop (Obj).
+			
+		if a-goal(at(X)) then goTo(X). %kkeogh wonder if need added not() clause ,not(bel(at(X))) before then ?
+		
+		%next line added kkeogh 06052014, changed goto to adopt(at( )  15-05-2014, commented out so only check for collided in event module not here
+		%if bel(state(Collided), not(at("RightHallC"))) then adopt(at("RightHallC")). % debug attempt to avoid collisions added kkeogh 06052014		
+ 
+		%prioritise enacting current goals in following order: findFight first, then stop fight, then removeBlockingBystanders 
+		%17052014 kkadded not(bel(fightLocated)  and not(bel(fightStopped)
+		if a-goal(fightLocatedLmk), not(bel(fightLocated)) then findFight.
+		if a-goal(fightStoppedLmk), not(bel(fightStopped)) then stopFight.
+		if a-goal(blockingBystanderRemovedLmk) then removeBlockingBystanders.
+
+		
+		% send message to middleware (if not already done) to inform of objectives that are reached
+		% as this is an unaware agent, no need to create reached() beliefs in this agent (landmarks are meaningless to this agent)
+		% kk added the +drop() to each of next 3 lines 06052014
+		if bel(fightLocated, not(sent(middleware, reached(fightLocatedLmk)))) then send(middleware, :reached(fightLocatedLmk)) + drop(fightLocatedLmk). 
+		if bel(fightStopped, not(sent(middleware, reached(fightStoppedLmk)))) then send(middleware, :reached(fightStoppedLmk)) + drop(fightStoppedLmk).
+		% not sure if blockingBystander should be an organizational goal with an associated Landmark? kk it may reoccur, so don't need to check if have already sent a message on reaching blockingBystanderRemoedLmk
+		if bel(blockingBystanderRemoved(L)) then send(middleware, :reached(blockingBystanderRemoved(L))). %+ drop(blockingBystanderRemovedLmk). 17052014
+		
+		% if not already waiting for a task, then send middleware a request to be allocated a task, insert a belief to say 'I am waiting for a task'
+		if bel(not(waiting)) then send(middleware, ?task) + insert(waiting).
+	}
+}
+
+event module{
+	program{
+		% if receive a task to do from middleware, delete waiting from beliefs
+		if bel(received(middleware, imp(do(X)))) then delete(waiting).		
+		% adopt task issued by middleware in order: fightLocated first, then fightStopped, then blockingBystanderRemoved.
+		if bel(received(middleware, imp(do(fightLocatedLmk)))) then adopt(fightLocatedLmk).% + delete(received(middleware, do(fightLocatedLmk))).
+		if bel(received(middleware, imp(do(fightStoppedLmk)))) then adopt(fightStoppedLmk).% + delete(received(middleware, do(fightStoppedLmk))).
+		if bel(received(middleware, imp(do(blockingBystanderRemovedLmk)))) then adopt(blockingBystanderRemovedLmk).% + delete(received(middleware, do(blockingBystanderRemovedLmk))).
+		% if middleware sends a 'noTask' message, then remove waiting belief and delete the message
+		if bel(received(middleware, noTask)) then delete(waiting) + delete(received(middleware, noTask)).
+		
+		%update beliefs based on percepts received.
+		if true then handleCommonPercepts.
+
+		% update beliefs about state added by kkeogh 06052014
+		if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).
+		
+		% if at a Front room location, create a belief that it has been checked and tell middleware it is checked KK 15-05-2014
+		if bel(percept(at(P)), front_room(P)), a-goal(fightLocatedLmk) then insert(at(P)) + insert(checked(P)) + send(middleware, :checkedForFight(P)).
+		%if bel(checked(X)) then insert(checkedForFight(X)) + send(middleware, :checkedForFight(X)).
+		
+		% update beliefs based on state changes
+		%if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).		
+		%if bel(state(Collided), not(at("RightHallA"))) then adopt (at("RightHallA"))+ delete (state(Collided)). 
+		% above line is a debug attempt to avoid collisions added kkeogh 06052014	modifed to next 2 lines 15-05-2014	
+		%if bel(state(Collided), a-goal(at("RightHallA"))) then drop(at("RightHallA")) + delete(state(Collided)).
+		%if bel(state(Collided), not(at("RightHallA"))) then adopt (at("RightHallA"))+ delete (state(Collided)). 
+
+	}
+}
+
+#import "officer_capabilities.mod2g".
+#import "common.mod2g".

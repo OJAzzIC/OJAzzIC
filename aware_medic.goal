@@ -1,0 +1,1106 @@
+%aware_medic.goal
+%C:\Users\kkeogh\GoogleDriveMelbourneUni\Research\BW4T\GOAL\GOALagents\BW4T2\aware_medic.goal
+init module {
+	knowledge {
+		#import "org_instance.pl". 
+			
+		% the following are used as convenience since the BW4T scenario is not perfect for our scenario 
+		injured(N) :- color(N,'Red',_).  % N is injured if N is coloured Red
+		seriouslyinjured(N) :- color(N,'Orange',_). % N is seriously injured if N is coloured Orange
+		at(N,X) :- color(N,_,X).         % N is at location X if color(N,_,X) is true
+		
+		% a room has only one neighbour (exclude Dropzone from being a room)
+		room(R) :- navpoint(_,R,_,_,[_]), R \= 'DropZone'.
+		% a room has only one neighbour, so front_room is the only neighbour to a room
+		front_room(FR) :- navpoint(_,R,_,_,[FR]), R \= 'DropZone'.		
+		front_room(R,FR) :- navpoint(_,R,_,_,[FR]).
+		
+		room_blocked(R) :- at(Ag,R), room(R), \+ rea(Ag,_,_).  % an agent Ag without a particular role is in the room R (blocking it)
+		room_occupied(R) :- at(Ag, R), room (R). % any agent is in that room R % added by KKEOGH 28042014
+		
+		%24032017 want to identify if an agent O is close (at) or nearby (a neighbour) to location FL
+		closeby(O,FL) :- at(O,FL).
+		nearby(O,FL) :- at(O,R), navpoint(_,FL,_,_,Neighbours), is_list(Neighbours), member(R, Neighbours).
+		
+		%13082016  if I am an orgMember of org O then myorg is org O
+		%05092016 move next line to org_reasoning.pl
+		%myorg(O) :- orgMember(O,M), me(M).
+		
+	}
+	beliefs {
+		% scene/1: Active scene
+		scene(stopFightSc).
+		scene(rescueInjuredSc).
+		
+		% agent(AgId, CapabilityList).  23/10/2016 added capability at('DropZone') to medic1,2,4.
+		agent(medic1, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic2, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		%13082016 add specific capabilities for stretcher rescue for medic3 so can be capable
+		%02112016 added not(injured(_)) to medic3 capabilities so officer can locateInjured
+		agent(medic3, [at(_),at(_,_),holds(_),injured(_),onStretcher(Ag), carryStretcher(Ag,O,L1,L2), at('DropZone'),not(injured(_))]).
+		agent(medic4, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]).
+		agent(medic5, [at(_),at(_,_),holds(_),injured(_),at('DropZone')]). %31032017
+		%02112016 added not(injured(_)) to officer1 capabilities so officer can locateInjured
+		%31032017 not sure officer1 is locating injured correctly, so comment out that capability for now
+		%agent(officer1, [not(at(_,_)),fight(_),not(injured(_))]).
+		agent(officer1, [not(at(_,_)),fight(_)]).
+		agent(officer2, [not(at(_,_)),fight(_)]).
+		agent(officer3, [not(at(_,_)),fight(_)]).
+		
+		% rea(AgId, RId, SId)
+		rea(medic1, medic, rescueInjuredSc).
+		rea(medic2, medic, rescueInjuredSc).
+		%06.12.2016 - 23.12.2016 commented out next line
+		rea(medic3, medic, rescueInjuredSc). %KK comment out this line to make this medic 3 not a rea, to test consider based on capabilities
+		rea(medic4, medic, rescueInjuredSc).
+		rea(medic5, medic, rescueInjuredSc).  %31032017
+		rea(officer1, officer, stopFightSc).
+		rea(officer1, officer, rescueInjuredSc).
+		rea(officer2, officer, stopFightSc).
+		rea(officer2, officer, rescueInjuredSc).
+		rea(officer3, officer, stopFightSc).
+		rea(officer3, officer, rescueInjuredSc).
+		
+		%13082016 comment this next line out and insert line later to set org conditionally for only medic 1 and medic 2. see new defn of myorg line 22. 
+		%myorg(medicOrg).  % set belief myorg (medicOrg) for all medic agents
+		% replace next 3 lines with general rule in org_reasoning.pl : orgMember(Org,A) :- %org(Org,Lmk,AgList,RoleList,PlanList,OrgNameList), member(A,AgList).
+		%orgMember(medicOrg, medic1). %orgMember(Org,A)
+		%orgMember(medicOrg, medic2).
+		%orgMember(medicOrg, medic3).
+	}
+	
+	%create beliefs based on percepts received
+	program {
+		forall bel( percept(navpoint(ID, Name, X, Y, Neighbours)) ) do insert( navpoint(ID, Name, X, Y, Neighbours) ).
+		forall bel( percept(state(State)) ) do insert( state(State) ).
+		if bel(percept(at(P))) then insert(at(P)).  %update beliefs about where I am located when received percept
+		if bel(percept(atBlock(B))) then insert (atBlock(B)). %01052016
+		%wonder if these 2 lines should be here? 30102016
+		%forall bel(percept(color(N, C)), in(P)) do insert(color(N,C,P)) +insert(in(P)).		
+		%if bel(percept(in(P))) then insert(in(P)) + insert(checked(P)).
+	}
+			
+	actionspec {
+		goTo(Location) {   % only move if not already moving
+            pre { not(state(traveling)) }
+			post { attemptedgoTo(Location) }
+			%post { true }
+		}
+		goToBlock(Block) {  % Block is in room L, must be in room L and not travelling
+			pre { not(state(traveling)), color(Block,_,L), in(L) }
+			post { true }
+		}
+		%13122016 pickUp {
+		%	pre { not(holding(_)), atBlock(X), color(X,C,R) }  % update block fact to indicate it is not at location R anymore
+		%	post { not(color(X,C,R)) }
+		%}
+		pickUp { %13122016   %26042017 consider adding to pre:  a-goal(holding(X), in('DropZone'))
+			pre { not(holding(_)), atBlock(X), color(X,C,R)  }  % update block fact to indicate it is not at location R anymore
+			% 22122016 post { not(color(X,C,R)), pickedup(X) }
+			post { pickedup(X) }
+		}
+		
+		putDown {
+			pre { holding(A) }
+			post {iputitdown(A), rescued(A) }
+			
+		}
+		
+		%putDown {
+			%pre { holding(_) }
+			%post { true }
+		%}
+	}
+}
+
+%note in the event module - all rules are processed, in the main module, only first applicable rule will fire.
+%if have a goal, it will be automatically dropped when it becomes true e.g. a-goal(holding(A)) will be dropped as soon as it is true that holding(A)
+%from programming manual: the main function of the main module is to specify an action selection strategy
+%for performing actions in an environment, the main function of the eventmodule is to process
+%events and update the agent's mental state accordingly.
+
+
+#import "organizational_reasoning.mod2g".
+#import "medic_capabilities.mod2g".
+#import "common.mod2g".
+
+
+main module{
+	program{
+		%13122016 if bel(at('DropZone'), not(holding(_)), state(collided)) then goTo('RightHallB'). %clear dropzone if collision occurred
+		
+		%01052016. 
+		if a-goal(torescue(Ag,L,O,M)), bel(holding(Ag), me(M), at('DropZone')), not(bel(at(O,'FrontDropZone'))) then send(O,!goTo('FrontDropZone')).
+		
+		%28032016 copied this line from in event module line 267 to also be here.  27012017 added send(O,rescued(Ag)). 11082017 added delete(avail(O)) so that I nolonger believe this partner is available in future
+		if a-goal(torescue(Ag,L,O,M)), bel(holding(Ag), me(M), at('DropZone'), at(O,'FrontDropZone')) then putDown +  insert(iputinDropZone(Ag)) + insert(rescuedtogether(Ag)) + insert(injuredRescued(Ag)) + drop(torescue(Ag,L,O,M)) + send(O,rescued(Ag)) + delete(avail(O)) + goTo('DropZone') . 
+		
+		% holding something in dropzone => put it down		% this next line of code is also in medic_capabilities - unecessary here?
+		% kkeogh added + adopt(goto("FrontDropZone") on next line so that medic doesn't hog the dropzone
+		%10032016 removed +insert(rescued(A)) from next line
+		%28032016 only putDown like this if not part of a shared stretcher rescue torescue, 1807 perhaps should add not(a-goal(rescueOnStretcherGoal(A,L,O,M))) to next line KKKKK
+		if bel(holding(A), at('DropZone')), not(a-goal(torescue(A,L,O,M))) then putDown  +  insert(iputDowninDropZone(A)) + goTo('RightHallC') + insert(injuredRescued(A)) + drop (holding(A), in('DropZone')). %+ adopt(goTo("FrontDropZone")).
+		
+		%if holding something outside drop zone that is occupied, then ask that agent to move on. 27052014
+		if bel(holding(A), at('FrontDropZone')), a-goal(holding(A), in('DropZone')) then goTo('DropZone'). %23062014
+		if bel(holding(A), at('FrontDropZone'), occupied('DropZone')), a-goal(holding(A), in('DropZone')) then clearRoom('DropZone') +insert(occupiedclearRoom("DropZone")) +delete(occupied('DropZone')). %2306 added delete(occupied())
+		if bel(holding(A), at('FrontDropZone'), state(collided)), a-goal(holding(A), in('DropZone')) then clearRoom('DropZone') +insert(collidedclearRoom('DropZone')) +delete(state(collided)).
+		%if bel(holding(_), at('FrontDropZone'), state(collided)) then clearRoom('FrontDropZone').
+		%if bel(holding(_), occupied('DropZone')) then clearRoom('DropZone').
+		%if a-goal(holding(I), in('DropZone')), bel(at(Ag,'DropZone'), me(Me), Ag\=Me) then clearRoom('DropZone'). % kk 16062014
+		if bel(holding(A), at('FrontDropZone')), a-goal(holding(A), in('DropZone')) then goTo('DropZone'). %KK 18062014
+		if bel(holding(A)), a-goal(holding(A), in('DropZone')) then goTo('DropZone').
+		%if bel(at('DropZone'), not(holding(_)) then goTo('RightHallC'). 
+		
+		%18072017 added this line to catch percept mid cycle
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+		
+		%25042017 added next line. 18072017 added to next line not(bel(holding(X)))
+		%23072017 changed bel(atBlock to bel(percept(atBlock everywhere
+		if a-goal(holding(X), in('DropZone')), bel(percept(atBlock(X))), a-goal(torescue(X,R,O,M)), not(bel(holding(X)))  then pickUp + insert(ipickedUPblock(X)).
+		%29042016 added next rule 01052016 removed send messages - wait till holding is true, remove  bel(at(R))
+		if a-goal(holding(X)), bel(atBlock(X)), a-goal(torescue(X,R,O,M))  then pickUp + insert(ipickedupblock(X)).% + send(O,onStretcher(X))+ send(O,!goTo('FrontDropZone')).
+		%kk 19062014 consider added + drop(holding(X) or drop(atBlock(X), at(R)) to next line, goal should automatically be dropped with bel(it is true)  29032016 only do this if doing an individual rescue - i.e. don't do it if have a stretcher rescue intention to rescue with another agent. 24042016 remove ,not(a-goal(torescue(X,R,O,M)))
+		
+		if a-goal(holding(X)), bel(percept(atBlock(X)), at(R))  then pickUp + insert(ipickedupblock(X)).  % at the block, so pick it up
+		
+		%06052016 4.47pm KKK next 4 rules added. 10.11pm added not(bel(at('DropZone')
+		if a-goal(holding(X), in('DropZone')), bel(holding(X)), not(bel(at('DropZone'))) then adopt(at('DropZone')).
+		%07052016 added next line to help agent drop the at(R) goal 04082018 added not(bel(holding(Y)))
+		if a-goal(holding(X), in('DropZone')), a-goal(at(R)), bel(injuredLocatedAt(X,R)), not(bel(holding(Y))), bel(percept(atBlock(X)))  then pickUp + drop(at(R)) + insert(ivepckedupblock(X)).
+		
+		if a-goal(holding(X), in('DropZone')), bel(atBlock(X))  then pickUp + insert(ivepckedupblock(X)).
+		
+		%08092017 10pm probably don't need this cause found bug in noticeblocknolongerinroom near line 376
+		%if a-goal(holding(X), in('DropZone')), bel(injuredLocatedAt(X,R), in(R)), not(bel(percept(color(X,C,R)))) then delete(injuredLocatedAt(X,R)).
+		
+		%26042017
+		if a-goal(holding(X), in('DropZone')), bel(injuredLocatedAt(X,R), in(R)) then goToBlock(X).
+		%24072017 added not(bel(delegateCarryStretcher(X,OO))) to next rule
+		if a-goal(holding(X), in('DropZone')), bel(injuredLocatedAt(X,R)), not(bel(rescued(X))), not(bel(at(R))), not(bel(delegateCarryStretcher(X,OO))) then adopt(at(R)) +insert(iadopt(at(R))).
+		%26042017 try commenting out next line - no good?
+		if a-goal(holding(X), in('DropZone')), bel(injuredLocatedAt(X,R), in(R)) then adopt(atBlock(X)).  
+		
+		%19042017 added next line kk 23072017 not sure if this line is problematic?
+		%11082017 if a-goal(atBlock(X)), a-goal(holding(X), in('DropZone')), bel(not(holding(X))) then goToBlock(X) + pickUp + insert(goToNpickupzBlock(X)).
+		%24042016
+		if a-goal(holding(X), in('DropZone')), bel(atBlock(X), at(R))  then pickUp +insert(ipickdupblock(X)).
+		%next line causes confusion if there are 2 injured blocks in the same room if above line comes after it, so moved that line first
+		if a-goal(atBlock(X)), a-goal(atBlock(Y)), bel(X\=Y, not(holding(X)), at(X,R), at(Y,R), at(R)) then goToBlock(X).
+		if a-goal(atBlock(X)), not(bel(holding(_))), bel(at(X,R), at(R)) then goToBlock(X).  %in the room, now go to block, 01022016 changed to not(bel rather than bel(not()
+		%if a-goal(atBlock(X)), bel(at(X,R)), not(a-goal(in(R))) then adopt(in(R)).	%uncommented kk 16-06-14
+		
+		%not sure why this rule is not in module rescueInjured, perhaps because it is just steps toward achieving holding goal
+		%holding(X) is made up of subtasks to be in same room as X and next to block, ready to pickup
+		%added check not already holding it and if already have the a-goal(atBlock(X), in(R)) so as not to repeat this unecessarily 1906201411.14pm 24042016 added not(bel(atBlock(X))) 
+		%06052016 if a-goal(holding(X)), not(bel(holding(X))), not(a-goal(atBlock(X),in(R))), bel(at(X,R)), not(bel(rescued(X))), not(bel(atBlock(X))) then adopt(atBlock(X),in(R)).  % create goal to be at the block and in the room
+		%29042016
+		%06052016 if a-goal(holding(X), in('DropZone')), not(bel(holding(X))), not(a-goal(atBlock(X),in(R))), bel(at(X,R)), not(bel(rescued(X))), not(bel(atBlock(X))), bel(onStretcher(X)), a-goal(torescue(X,R,O,M)) then adopt(atBlock(X),in(R)) + delete(onStretcher(X)) + send(O,delete(onStretcher(X))).
+		%29042016 1123pm
+		%30042016 if a-goal(holding(X), in('DropZone')), not(bel(holding(X))), not(a-goal(atBlock(X),in(R))), bel(at(X,R)), not(bel(rescued(X))), bel(atBlock(X)), bel(onStretcher(X)), a-goal(torescue(X,R,O,M)) then pickUp + send(O,onStretcher(X)).
+		%30042016 removing send(O,onStretcher(Ag)) till after holding(Ag) is true.
+		if a-goal(holding(X), in('DropZone')), not(bel(holding(X))), not(a-goal(atBlock(X),in(R))), bel(at(X,R)), not(bel(rescued(X))), bel(atBlock(X)), a-goal(torescue(X,R,O,M)) then pickUp.% + send(O,onStretcher(X)).
+		% 1906214 not sure if next 2 lines will ever fire, do we ever have goal of holding (X) in a room other than dropzone?	20042016 fix bug in next line with not(bel(	
+		if a-goal(holding(B), in(X)), bel(X \= 'DropZone'), not(bel(holding(_))), not(bel(occupied(X))) then goTo(X).	% goal to be in room X, believe room X is not occupied, so go there	20042016 fixed bug on next line not(bel(..) 24042016 added not(bel(at(X)))  06052016 added not(bel(rescued(B))) 
+		if a-goal(holding(B), in(X)), bel(X \= 'DropZone'), not(bel(holding(_))), bel(occupied(X)), not(bel(at(X))), not(bel(rescued(B))) then clearRoom(X) + goTo(X). %18062014
+		%27032016 added adopt (at(X)) on next line 06052016 added not(bel(rescued(B))) 
+		if a-goal(holding(B), in(X)), bel(holding(B)), not(bel(rescued(B)))  then adopt(at(X)) +  goTo(X) +insert(goToadoptat(X)). % goal to be holding block in room X have block now move to location X
+		
+		%13122016 commented out next line, 23012017 put line back in and added occupied(X)
+		if a-goal(in(X)), bel(state(collided), occupied(X)) then clearRoom(X) + goTo(X). %08022016
+		if a-goal(in(X)) then goTo(X).  % goal in(X) is created for locating injured
+		%04082017 added next line 13082017 moved this line up from below next line 210
+		if a-goal(at("DropZone")) then goTo("DropZone").
+		%04082017 changed next line to check if holding anything and exclude dropzone
+		if a-goal(at(X), X\='DropZone'),not(bel(holding(Y))) then goTo(X).   % enact goal to go to location X
+		  
+		% enact goals in following order : remove blocking bystanders, then locateInjured, then rescueInjured 
+		%update this to refer to plans in orgs? or at least look at priorities for current goals
+		%kk added next line 28-0402014, 
+		
+		% enact goals in order - goTo first, then locate injured, then rescue injured, the remove blocking bystanders
+		if a-goal(goTo(X)) then goTo(X).  
+		%goTo(X) is goal created by clearRoom(L) module
+		%kk added not(bel(checkedRooms)) to next line10062014
+		
+		if a-goal(injuredLocatedGoal), not(bel(checkedRooms)) then locateInjured.
+		%nextline added 10062014 kk
+		if a-goal(injuredLocatedGoal), bel(checkedRooms) then insert(reached(injuredLocatedLmk)).
+		
+		%if have a goal to rescue injured, prioritise stretcher rescues by adopting them first.
+		% complex rescue of injured using Medic Organisation cooperation using stretchers  -testing concurrent tasks
+		% should I test here if have agreed to doing a stretcher rescue, then adopt the goal and do it... 18072014
+		%06052016 need to modify so that stretcher rescue only happens for seriouslyinjured add bel(seriouslyinjured(X))
+		%08092016 need to add to next line that MyOrg is responsible for rescue, injuredRescuedLmk with rea in roles defined %org(Org,Lmk,AgList,RoleList,PlanList,OrgNameList), rea(M,R,Sc), member(R,Roles), member(M, Members), responsible(injuredRescuedLmk,Sc,R)  
+		%alternatively could just check that MyOrg == medicOrg.
+		forall a-goal(injuredRescuedGoal), bel(injuredLocatedAt(X,L), seriouslyinjured(X), myorg(MyOrg), org(MyOrg,Lmks,Members,Roles,P,N), member(injuredRescuedLmk,Lmks), rea(M,R,Sc), member(R,Roles), member(M, Members), responsible(injuredRescuedLmk,Sc,R) ) do insert(rescue_injured_together(X,L,Members)) + rescue_injured_together(X,L,Members).
+		
+		% could add code here to allow an agent who is capable of doing some of stretcher rescue but not in an org to offer to do a stretcher rescue with others in the scene?
+		% 23012017 added code here to allow agent in role medic who is not in org to do a rescue_injured_together 
+		% need to create a list of potential partner agents [M] 
+		% replace with rule below forall a-goal(injuredRescuedGoal), bel(injuredLocatedAt(X,L), seriouslyinjured(X), rea(M,R,Sc), responsible(injuredRescuedLmk,Sc,R) ) do  insert(notLookingForOrg) + insert(rescue_injured_together(X,L,M)) + rescue_injured_together(X,L,[M]).
+		forall a-goal(injuredRescuedGoal), bel(injuredLocatedAt(X,L), seriouslyinjured(X), rea(M,R,Sc), me(M), responsible(injuredRescuedLmk,Sc,R), agents_capableList(Members, rescueOnStretcherLmk)  ) do  insert(inRoleIwillWorkWithOthersCapable) + insert(rescue_injured_together(X,L,Members)) + rescue_injured_together(X,L,Members).
+		
+		%23012017 added code here to allow an agent who is capable of doing stretcher rescue but not in org and not in role of medic to do a stretcher rescue
+		forall a-goal(injuredRescuedGoal), bel(injuredLocatedAt(X,L), seriouslyinjured(X), me(M), capable_some(M, RescueOnStretcherLmk), agents_capableList(Members, rescueOnStretcherLmk)) do  insert(iWillWorkWithOthersCapableStretcher) + insert(rescue_injured_together(X,L,Members)) + rescue_injured_together(X,L,Members).
+		
+		% rescue injured by working alone -comment out this next line to force stretcher rescues
+		% 22/8/14 testing stretcher rescue, so ignore this line 
+		%06052016 if haven't already adopted a shared plan for a rescue, then can do individual rescue. 31102106 added insert(rescueInjured) on next line
+		%23022017 if wanted to allow agents to do individual rescues before stretcher rescues, would move this line higher (or insert this line somewhere inside the rescue_injured_together() module to enable agents to do both?)
+		if not(a-goal(aSP(X))), a-goal(injuredRescuedGoal), bel(injuredLocatedAt(_,_)) then insert(rescueInjured) + rescueInjured.
+		
+		if a-goal(injuredRescuedGoal), bel(injuredRescued) then insert(reached(injuredRescuedLmk)).
+		%to test initiative of officer, remove all idea of medics removing blocking bystanders 27052014, comment next line 		
+		if a-goal(blockingBystanderRemovedGoal) then removeBlockingBystanders. %should this be 1st priority? no 1st priority for officers maybe, not medics
+		
+		
+		% if collision occurs and you are responsible, move away from that room to LeftHallC %added by KKEOGh 28042014
+		%if bel(state(Collided), collided(R),me(Me),at(Me,R)) then goTo("LeftHallB").
+		%if bel(state(Collided), not(at("RightHallB"))) then goTo("RightHallB"). % debug attempt to avoid collisions added kkeogh 06052014		
+	
+		%comment out next line to toggle off trial of delegating stretcher carrying to an officer
+		%21112016 comment out following line to turn off stretcher carrying handover - delegation of carry stretcher task by medic2
+		%03022017 testing stretcher handover for 3 medic agents
+		%if bel(me(medic2)), not(bel(delegateTest)) then insert(delegateTest) + considerOrgObjectives.
+		%17032017 set so that all medics will delegate stretcher handover to an officer
+		%24032017 changed next line to include not(bel(delegateTest)) which had taken out on 17032017 i presume
+		%toggle this line on/off to test delegation of strether carrying to an officer
+		%01082017 turn off 
+		%11082017 toggle off %30082017 toggle on
+		%07092017 toggle off if bel(me(Me)), not(bel(delegateTest)) then insert(delegateTest) + considerOrgObjectives.
+		
+		% if have goals to consider, then consider them in light of organizational objectives
+		if a-goal(consider(Ag,Obj,Scene)) then considerOrgObjectives.
+		% find possible goals to consider
+		if bel(me(Me)) then orgReasoning(Me).
+	}
+}
+
+module considerOrgObjectives {
+	program {
+		% update beliefs regarding completed objectives. Create reached(Obj) beliefs to signal landmark Obj is completed
+		if a-goal(consider(Ag,injuredLocatedLmk,Sc)), bel(checkedRooms) then insert(reached(injuredLocatedLmk)).
+		%if a-goal(consider(Ag,injuredRescuedLmk,Sc)), not(bel(injured(_))), bel(checkedRooms) then insert(reached(injuredRescuedLmk)).
+		if a-goal(consider(Ag,injuredRescuedLmk,Sc)), bel(injuredRescued) then insert(reached(injuredRescuedLmk)).
+		if a-goal(consider(Ag,rescueOnStretcherLmk,Sc)), bel(injuredRescued) then insert(reached(rescueOnStretcherLmk)).
+		
+		% if find a room is blocked, then delegate task to another capable agent in the organization to remove the blocking Bystander agent.
+		% so long as I can delegate to the OtherAgent OtherA
+		% kk not sure about the Objective reference in capable_all() where is Objective defined? (should Objective be blockingBystanderRemoved ?)
+		% comment out next line to test initiative of officer to resolve blocking bystander 27052014, uncommented 10062014
+		if a-goal(consider(Ag,blockingBystanderRemovedLmk,Sc)), a-goal(in(X)), bel(room_blocked(X), rea(Ag,Role,Sc), delegate(Ag,blockingBystanderRemovedLmk,Sc,OtherA,_), capable_all(OtherA,Objective)) then send(OtherA, !delegated(blockingBystanderRemovedGoal(X))) + drop(consider(Ag,blockingBystanderRemovedLmk,Sc)).
+		%if a-goal(consider(Ag,blockingBystanderRemoved,Sc)), a-goal(in(X)), bel(room_blocked(X), rea(Ag,Role,Sc), delegate(Ag,blockingBystanderRemoved,Sc,OtherA,_), capable_all(OtherA,blockingBystanderRemoved)) then send(OtherA, !delegated(blockingBystanderRemoved)) + drop(consider(Ag,blockingBystanderRemoved,Sc)).
+		% if have a goal to remove blockingBystanders, but no more bystanders, drop the goal by setting it reached
+		% comment out next line to test initiative of officer to resolve blocking bystander 27052014
+		if a-goal(consider(Ag,blockingBystanderRemovedLmk,Sc)), not(bel(room_blocked(X))) then insert(reached(blockingBystanderRemovedLmk)).
+		%next line added 10062014 if noone else was asked yet to remove blocking bystander, do it myself
+		if a-goal(consider(Ag,blockingBystanderRemovedLmk,Sc)), a-goal(in(X)), bel(room_blocked(X)) then adopt(blockingBystanderRemovedGoal).
+		
+		% adopt goals in the following order: injuredLocated then rescuestretcher, then injuredRescued.
+		if a-goal(consider(Ag,injuredLocatedLmk,Sc)) then adopt(injuredLocatedGoal). 
+		%28032016 fix typo missing capital S for OnStretcher
+		if a-goal(consider(Ag,rescueOnStretcherLmk,Sc)) then adopt(injuredRescuedGoal).
+		if a-goal(consider(Ag,injuredRescuedLmk,Sc)) then adopt(injuredRescuedGoal).
+		
+		% kk added next line to enable medics to directly themselves remove blocking bystanders, as copied from aware_officer, interesting that it doesn't create a goal to removeblocking bystanders, but just does it?
+		%kk 28042014 put similar line above in main module
+		%if a-goal(blockingBystanderRemovedGoal) then removeBlockingBystanders. % currently above, the medic delegates to officers to remove blockingbystanders
+		
+		%24032017
+		if bel(me(Me)) then orgReasoning(me). 
+		}
+}
+
+% consider if should share intentions before putting on stretcher or need to wait until bel(onStretcher(A)) in this policy
+%26042017 removed , bel(onStretcher(A)) so intentions are shared sooner 03082017 should i add bel(gotStretcher(A)) ?
+%03082017 it is possible that 2 agents agree on a SP and 2 other agents agree on same rescue as a SP and then whoever starts first should do it, but possibly one will give up when they should proceed.
+%14082017 added bel(gotStretcher(A))  14082017 9.51pm
+module shareAdoptedSP(Ag, A) {
+program {
+	if bel(aSP(A,L,O,M)), a-goal(aSP(A)), bel(gotStretcher(A)), not(bel(informed(Ag,rescuing(A))))  then send(Ag, rescuing(A)) + insert(informed(Ag,rescuing(A))) + insert(rescuing(M,A)).
+}
+}
+
+%toggle use of each these 2 modules to change policy on sharing beliefs
+module shareNobeliefs(Ag) {  % 03012017 added empty module to turn off shared beliefs rename this to sharebeliefs (and rename sharebeliefs to something else) to use this module
+program {	if true then insert(nobeliefsShared(Ag)). }
+}  
+
+
+module sharebeliefs(Ag) {  %03012017 changed name from sharebeliefs to shareMybeliefs and created empty module sharebeliefs to turn off share beliefs
+program {    %06042016 separated out not(bel(sent() on next 2 lines
+			forall bel(color(N,C,X)), not(bel(sent(Ag,color(N,C,X)))) do send(Ag, color(N,C,X)).	
+			forall bel(checked(Y)), not(bel(sent(Ag,checked(Y)))) do send(Ag, checked(Y)).
+			
+			% create explicit belief about location of injured 10062014, share this belief with other agents responsible
+			%forall bel(color(A,'Red',L), checked(L)) do insert(injuredLocatedAt(A,L))+ send(Ag, injuredLocatedAt(A,L)). %%kk 20062014
+			
+			%08092016 added injured(A) to next 2 rules. 01082017 added not(bel(sent(Ag,injuredLocatedAt(A,L)))
+			forall bel(injuredLocatedAt(A,L), injured(A)), not(bel(sent(Ag,injuredLocatedAt(A,L)))) do send(Ag,injuredLocatedAt(A,L)). %kk 20062014
+			forall bel(injuredLocated(A), injured(A)), not(bel(sent(Ag,injuredLocated(A)))) do send(Ag, injuredLocated(A)). %kk 20062014
+			
+		}
+}
+
+%01052016
+module pickUp(Block) {
+program {
+	if true then goToBlock(Block).
+	if bel(percept(atBlock(X))) then pickUp.
+		}
+}
+
+
+event module {
+	program {
+		% receive percepts
+		if true then handleCommonPercepts.
+		
+
+		% update beliefs based on received percepts
+		% states possible include: "arrived", "collided", "traveling".
+		if bel(state(State), percept(state(NewState)) ) then delete( state(State) ) + insert( state(NewState) ).
+		
+		if bel(percept(state(NewState))) then insert (state(NewState)). %18062014 wondering if need this line
+
+		if bel(percept(not(occupied(R))) ) then delete( occupied(R) ).
+		if bel(percept(occupied(R)) ) then insert( occupied(R) ).
+		
+		if bel(percept(holding(B))) then insert(holding(B)).
+		if bel(percept(not(holding(B)))) then delete(holding(B)).
+	
+		%09122016 change in(P) to percept(in(P) on next line
+		forall bel(percept(color(N, C)), percept(in(P))) do insert(color(N,C,P)) +insert(in(P)).		
+		%27102016 comment this line out   forall bel(state(arrived), color(N,C,P), in(P), not(percept(color(N,C)))) do delete(color(N,C,P)) + insert(deletedColor(N,C,P)).
+		%08092016 update percept about block that you notice has gone missing (been rescued) - is this fair, should there be an explicit room search or is it ok to just notice this? **** 28102016 added not(holding(N)) 09122016 changed to not(percept(holding(N))) and added not(bel(ipickedupblock(N))) %27012017 added not(bel(onStretcher(N))) 08092017 removed bel in delete(bel(injuredLocatedAt) 09092017 changed ( ) how much included in forall bel(), separate not(bel())
+		%10092017 changed so all tests are in the forall bel( ) 
+		forall bel(color(N,C,P), percept(in(P)), not(percept(color(N,C))), not(percept(holding(N))), not(ipickedupblock(N)), not(onStretcher(N)), not(gotStretcher(N))) do delete(color(N,C,P)) + insert(deletedaColor(N,C,P)) +insert(noticedBlockIsNoLongerInRoom(N,P)) + delete(injuredLocated(N)) + delete(injuredLocatedAt(N,P)). % 23072017 +insert(rescued(N)).
+		
+		if bel(percept(in(P))) then insert(in(P)) + insert(checked(P)).
+		if bel(percept(not(in(P)))) then delete(in(P)).
+		%08092017do i need this or perhaps not now i have fixed bug in line 2 lines up.09092017 think we need it
+		forall bel(color(N,C,P), in(P), not(percept(color(N,C))), not(percept(holding(N))), not(ipickedupblock(N)), not(onStretcher(N)), not(gotStretcher(N))) do delete(color(N,C,P)) + insert(deletedaColor(N,C,P)) +insert(noticedBlockIsNoLongerInRoom(N,P)) + delete(injuredLocated(N)) + delete(injuredLocatedAt(N,P)). 
+		
+		%10092017 seems to be a bug delay with percept recognising block not in room, this will pick it up later in those cases
+		forall bel(color(N,C,P), notcolor(N,C), not(percept(holding(N))), not(onStretcher(N))) do delete(color(N,C,P)) + insert(deletedaColor(N,C,P)) +insert(noticedBlockIsNoLongerInRoom(N,P)) + delete(injuredLocated(N)) + delete(injuredLocatedAt(N,P)) + delete(notcolor(N,C)) + insert(perceptdelaynotcolor(N,C)).
+		
+		if bel(percept(atBlock(B))) then insert(atBlock(B)).
+		if bel(percept(not(atBlock(B)))) then delete(atBlock(B)).
+
+		%kk added next line to note collision state in room R, in belief set
+		%if bel(state(Collided), at(R)) then insert(collided(R)).
+		%if not (bel(state(Collided), collided(R))) then delete (collided(R)).
+		%if bel(state(Collided)) then goTo("LeftHallA"). % debug attempt to avoid collisions added kkeogh 06052014		
+
+		
+			
+		%18062014 move the processing of organizationalEvents to end of event module from beginning
+		% inform other agents of progress and receive updates from other agents on progress - organizational communication updates
+		if true then organizationalEvents.
+		
+	
+	}
+}
+
+module organizationalEvents {
+	program[order=linearall] {
+		%24072017
+		if a-goal(holding(X), in('DropZone')), bel(atBlock(X)), not(bel(holding(X))), not(a-goal(torescue(X,R,O,M)))  then pickUp + insert(iipickedUpIndivRescue(X)).
+		%16122016 added next rule
+		if a-goal(holding(X), in('DropZone')), bel(percept(atBlock(X))), not(bel(holding(X))), not(a-goal(torescue(X,R,O,M)))  then pickUp + insert(pickedUpIndivRescue(X)). %interesting bug  - if 2 blocks in room sometimes picks up other block not X 
+		%01052016. 01052016 4.15pm added a-goal(aSP(X)) to next few rules. %02042017 moved pickUp to end of line - next 2 rules
+		if a-goal(holding(X), in('DropZone')), bel(percept(atBlock(X))), not(bel(holding(X))), a-goal(torescue(X,R,O,M)), a-goal(aSP(X))  then  pickUp + insert(justpickedupblock(X)).
+		if a-goal(holding(X)), bel(percept(atBlock(X))),  a-goal(aSP(X)), a-goal(torescue(X,R,O,M)), not(bel(holding(X)))  then  pickUp + insert(justpickupblock(X)).
+		%20042017 added next rule and changed order of all rules nearby so that pickUp occurs before the insert in the rule
+		if a-goal(holding(X), in('DropZone')), bel(atBlock(X)),  a-goal(aSP(X)), a-goal(torescue(X,R,O,M)), not(bel(holding(X)))  then  pickUp + insert(justpickUPblock(X)).
+		%01052016 if haven't the goal to do the pickup drop the goal to be at the block  %02042017 not sure why this next rule is here? removed this line 5.30pm 02042017
+		%if a-goal(atBlock(X)), a-goal(torescue(X,R,O,M)), bel(front_room(R,FR)), a-goal(onStretcher(X), at(FR)) then drop(atBlock(X)). 
+		%01052016 do we also need this: if a-goal(atBlock(X)), bel(rescued(X)) then drop(atBlock(X)). %?
+		if a-goal(holding(X), in('DropZone')), bel(holding(X)), not(bel(in('DropZone'))) then goTo('DropZone').  %21122016
+		% will next line work - check if there is a stage that we have a valid holding in drop zone goal but not the onStretcher goal KK 01052016 4pm 02042017 changed at(O,M) to at(O,FR) on next line in the not(a-goal(onStretcher ..)
+		if a-goal(holding(X), in('DropZone')), not(a-goal(aSP(X))), a-goal(torescue(X,R,O,M)), not(a-goal(onStretcher(X, at(R), at(O,FR)))) then drop(holding(X), in('DropZone')).
+		if a-goal(atBlock(X)), bel(percept(atBlock(X))), a-goal(torescue(X,R,O,M)), not(bel(holding(X))), a-goal(onStretcher(X), at(R), at(O,FL)), a-goal(aSP(X)), bel(gotStretcher(X)), not(bel(rescued(X))) then pickUp + insert(pickedupBLock(X)). %05012016 5.15pm  + adopt(holding(X), in('DropZone')).
+		%10092017 added received(O,gotStretcher(X))) instead of gotStretcher(X)
+		if bel(percept(atBlock(X))), a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), not(bel(holding(X))), a-goal(onStretcher(X), at(R), at(O,FL)), bel(received(O,gotStretcher(X))), not(bel(rescued(X))) then pickUp + insert(pickedupBLock(X)) +adopt(holding(X), in('DropZone')).
+		%01052016  31072017 should be checking together(FL ? or avail(O) on next line before inserting gotStretcher
+		%31072017 added bel(avail(O)) 
+		if bel(percept(atBlock(X))), bel(at(O,FL), front_room(L,FL)), a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), not(bel(holding(X))), a-goal(onStretcher(X), at(R), at(O,FL)), not(bel(gotStretcher(X))), bel(avail(O)) then insert(gotStretcher(X)) + send(O, gotStretcher(X)).
+		%sometimes the percept doesn't seem quick enough regarding atBlock, trying next lines to avoid that problem 01052016
+		if a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), not(bel(holding(X))), a-goal(onStretcher(X), at(R), at(O,FL)), bel(at(L), at(O,FL)) then insert(gotStretcher(X)) + send(O,gotStretcher(X)).
+		%01052016 4.49pm not sure this is helpful if bel(gotStretcher(X)), a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), a-goal(onStretcher(X), at(R), at(O,FL)), bel(at(L)), not(bel(rescued(X))) then pickUp(X) + insert(pickup(X)) + adopt(holding(X), at('DropZone')).
+		
+		%31072017 if my partner thinks we are workkng together, but I am committed to another SP, tell partner not avail 01082017 added isent belief 03082017 added bel(aSP(B)) to check I have another competing SP
+		%if bel(received(O,gotStretcher(Ag))), bel(me(M)), not(a-goal(aSP(Ag))), not(bel(aSP(Ag,L,O,M))), not(bel(rescued(Ag))), a-goal(aSP(B)), not(bel(isent(O,notavail(M,Ag)))) then send(O, notavail(M)) +insert(isent(O,notavail(M,Ag))).
+		%11082017 toggle next rule on and above rule off. 1408 added send(O,notavail(M)) 23082017 added injuredLocatedAt so L is not a free variable
+		if bel(received(O,gotStretcher(Ag))), bel(me(M)), not(a-goal(aSP(Ag))), not(bel(aSP(Ag,L,O,M))), not(bel(rescued(Ag))), a-goal(aSP(B)), not(bel(isent(O,drop(M,Ag)))), bel(injuredLocatedAt(Ag,L)) then send(O, drop(aSP(Ag,L,M,O))) +send(O,notavail(M)) + insert(isent(O,drop(aSP(Ag,L,M,O)))).
+		
+		%09092017 %10092017 tell partner to drop it too
+		if a-goal(aSP(Ag)), not(bel(seriouslyinjured(Ag))), bel(aSP(Ag,L,O,M)) then drop(aSP(Ag)) + send(O,drop(aSP(Ag,L,M,O))).
+		
+		%03082017 if another agent believes we are working together, perhaps I should adopt that plan if I haven't already a plan. 11082017 added + send(O,avail(M)) + send(O,adopt(aSP(Ag,L,O,M)))  31082017 added not(bel(receivedDropSP(Ag))) 09092017 added bel(seriouslyinjured(Ag))
+		if bel(received(O,gotStretcher(Ag))), bel(me(M)), not(a-goal(aSP(Ag))), not(bel(aSP(Ag,L,O,M))), bel(seriouslyinjured(Ag)), not(bel(rescued(Ag))), not(a-goal(aSP(X))), bel(received(O,adopt(aSP(Ag,L,M,O)))), bel(avail(O)), not(bel(receivedDropSP(Ag))) then insert(aSP(Ag,L,O,M))+ insert(mixupnowadopedaSP(Ag,O)) + adopt(aSP(Ag)) + send(O,avail(M)) + send(O,adopt(aSP(Ag,L,O,M))).
+		
+		%13082016 added next line to trigger agreement that both agents were together at front of room and can proceed to dropzone now
+		if bel(delegateCarryStretcher(Ag,OO), me(M)), not(bel(rescued(Ag))), a-goal(torescue(Ag,L,OO,M)),
+		bel(together(FL,OO,M)), bel(received(OO,together(FL,M,OO))) then send(OO,together(FL,OO,M)) + delete(received(OO,together(FL,M,OO))).
+		
+		%28072016 13082016 added not(bel(rescued(Ag)))
+		%01042017 if bel(delegateCarryStretcher(Ag,FL,'FrontDropZone'), me(M)), not(bel(rescued(Ag))), a-goal(torescue(Ag,L,OO,M)), not(bel(together(FL,OO, M))) then goTo(FL).
+		
+		%21072017 keep track of officers available to help
+		forall bel(received(G,avail(G))) do insert(avail(G)) + delete(received(G,avail(G))).
+		forall bel(received(G,notavail(G))) do delete(avail(G)) + delete(received(G,notavail(G))).
+		
+		%21072017 only do next rules if there is at least one avail officer added bel(avail(G))
+		%18072016 add here trial to delegate carry stretcher to an officer, 04022017 added + goTo(FL)
+		if bel(delegateTest), bel(avail(G)), not(bel(delegateCarryStretcher(Ag,FL,'FrontDropZone'))), bel(onStretcher(Ag)), a-goal(torescue(Ag,L,O,M)), bel(holding(Ag)), bel(front_room(L,FL))  then   send(O,drop(torescue(Ag,L,O,M))) + drop(at('DropZone')) + drop(holding(Ag), in('DropZone')) + insert(delegateCarryStretcher(Ag,FL,'FrontDropZone')) + delegateCarryStretcher(Ag, FL, 'FrontDropZone',O) + goTo(FL).
+		
+		%04022017 added + delete(received((O,together(FL,M,O))), moved this line up higher before pickups
+		if bel(received(O,together(FL,M,O))) then insert(together(FL,O,M)) + delete(received(O,together(FL,M,O))). % ensure shared belief we are both together 07-02-2016 
+		
+		if not(bel(gotStretcher(X))), a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), a-goal(onStretcher(X), at(R), at(O,FL)), bel(at(L), at(O,FL)), a-goal(atBlock(X)), not(bel(rescued(X))) then adopt(holding(X), at('DropZone')).
+		%01052016. 13082017 changed bel to a-goal(torescue...)
+		if a-goal(torescue(X,R,O,M)), a-goal(aSP(X)), bel(at(O,'DropZone')), bel(onStretcher(X)) then   goTo('FrontDropZone'). 
+		
+		%18072016 add here trial to delegate carry stretcher to an officer
+		%18072016 add here trial to delegate carry stretcher to an officer. replace this with line 381
+		%if bel(delegateTest), not(bel(delegateCarryStretcher(Ag,FL,'FrontDropZone'))), bel(onStretcher(Ag)), a-goal(torescue(Ag,L,O,M)), bel(holding(Ag)), bel(front_room(L,FL))  then delegateCarryStretcher(Ag, FL, 'FrontDropZone',O) + send(O,drop(torescue(Ag,L,O,M))) + insert(delegateToIICarryStretcher(Ag,FL,'FrontDropZone')).
+		   
+		%11032016 put this line here so every cycle it occurs. 28032016 added check for onStretcher(A)
+		%01052016 if bel(holding(A), onStretcher(A)) then goTo('DropZone'). 
+		%28072016 added bel(together(FL, O,M), front_room(R,FL)) to next line so when delegate carry stretcher will first wait for together moment at front door to room R before going to dropzone
+		if bel(holding(A), onStretcher(A)), a-goal(torescue(A,R,O,M)), bel(together(FL, O,M), front_room(R,FL)) then goTo('DropZone') + send(O,!goTo('FrontDropZone')) + send(O,onStretcher(A)).
+		%31032017 added new version for delegate carry stretcher where agents might meet for together moment at frontdropzone instead
+		%31072017 added bel(avail(O))
+		if bel(holding(A), onStretcher(A)), a-goal(torescue(A,R,O,M)), bel(together('FrontDropZone', O,M)), bel(avail(O)) then goTo('FrontDropZone') +  send(O,onStretcher(A)).
+	
+		%01052016 moved this line here from lower down
+		%30042016 separating out the onStretcher belief until sure are holding(Ag).  31072017 added bel(avail(O))
+		if bel(holding(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(avail(O)) then insert(onStretcher(Ag))  +send(O,onStretcher(Ag)) + send(O,!goTo('FrontDropZone')) + drop(atBlock(Ag)) + drop(onStretcher(Ag), at(L), at(O,FL)) + adopt(holding(Ag), in("DropZone")).
+		%if a-goal(torescue(Ag,L,O,M)), bel(me(M)), not(bel(rescued(Ag))), bel(holding(Ag)) then insert(onStretcher(Ag)) + send(O,onStretcher(Ag)). 
+	
+	%28032016 added next 2 lines %05042016 moved these 2 lines from rescue injured together module to here
+		if a-goal(at('DropZone')) then goTo('DropZone').
+		if a-goal(at('FrontDropZone')) then goTo('FrontDropZone').
+	
+	
+		%28032016 moved next 3 rules up higher to here
+		%27032016 added adopt (at('DropZone')), + send(O,!goTo('FrontDropZone')) 2803 changed waiting to waiting('DropZone')
+		if bel(holding(Ag), at('DropZone')), a-goal(torescue(Ag,L,O,M)), not(bel(at(O,'FrontDropZone'))) then adopt(at('DropZone')) + goTo('DropZone') + insert(waiting('DropZone')) + send(O,!goTo('FrontDropZone')).
+		
+		
+		
+		%28032016 moved these up earlier to here
+		%11032016 copied this line here immediately following realisation of where my collaborator is in command above
+		%13032016 added goTo('DropZone') in an effort to slow down the agent 28032016 added onStretcher(Ag) 27012017 added  + send(O,rescued(Ag)) 11082017 added delete(avail(O))
+		if a-goal(torescue(Ag,L,O,M)), bel(holding(Ag), me(M), at('DropZone'), at(O,'FrontDropZone'), onStretcher(Ag)) then putDown +  insert(iputinDropZone(Ag)) + insert(rescuedtogether(Ag)) + insert(injuredRescued(Ag)) + drop(torescue(Ag,L,O,M))+  send(O,rescued(Ag)) + delete(avail(O)) + goTo('DropZone'). 
+		
+		%04042017 added this to address bug, but not sure if/why i should need/have this?
+		if bel(rescued(X)), a-goal(torescue(X, L, O,M)) then drop(torescue(X, L, O, M)).
+		
+		%21072017 added next line, 2407 added + delete(aSP(X,L,O,M)) + drop(onStretcher(X), at(FL)) +drop(aSP(X)).
+		%03082017 added + delete (received(O,drop(torescue..)
+		if bel(received(O, drop(torescue(X,L,M,O)))), a-goal(torescue(X,L,O,M)), bel(front_room(L,FL)) then drop(torescue(X,L,O,M)) + delete(aSP(X,L,O,M)) + drop(onStretcher(X), at(FL)) + drop(aSP(X)) + delete(received(O, drop(torescue(X,L,M,O)))) .
+		
+		%  progress update from other responsible for objectives, 
+		% if any agent has checked location X, I don't need to, so drop this goal if I have it, also update my beliefs to say it is checked and delete message
+		% this is a policy of transferring beliefs from other agents in the scene to become my beliefs.  
+		
+		forall bel(received(Ag, checked(X))) do insert(checked(X)) + insert(toldchecked(X)) + delete(received(Ag, checked(X))). 
+		
+		%01042017
+		forall bel(received(Ag, rescuing(Ag,Y))), not(bel(rescuing(Ag,Y))) do insert(rescuing(Ag,Y)).
+		forall bel(received(Ag, rescuing(Y))), not(bel(rescuing(Y))) do insert(rescuing(Y)).
+		forall bel(received(Ag, rescuing(Y))), not(bel(rescuing(Ag,Y))) do insert(rescuing(Ag,Y)).
+		forall bel(received(Ag, cancelRescuing(Ag,Y))), bel(rescuing(Ag,Y)) do delete(rescuing(Ag,Y)).
+		
+		%13032016 copied next line here to ensure that agent is up to date with location of other agents 	%05042016 moved this from module rescue_injured_together in medic capabilities		
+		if bel(received(O,at(O,L))) then insert(at(O,L)) + delete(received(O,at(O,L))).  
+		
+		%16122016
+		%26042017 if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(in(R))) then adopt(atBlock(Ag)).
+		%26042017 added next 2 lines 07052017 added not(bel(atBlock(Ag))) to next line
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(in(R))), not(bel(atBlock(Ag))) then goToBlock(Ag).
+		%07052017 changed atBlock(X) to atBlock(Ag) on next line
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+		
+		%before thinking about swapping roles, if have goals current, act on them 19042016, 15122016 changed at(X,R) to injuredLocatedAt(X,R)
+		if a-goal(atBlock(X)), not(bel(holding(_))), bel(injuredLocatedAt(X,R), at(R)) then goToBlock(X).  %in the room, now go to block
+		if a-goal(atBlock(X)), not(bel(holding(_))), bel(injuredLocatedAt(X,R), in(R)) then goToBlock(X).  % 01052016
+		if a-goal(atBlock(X)), not(bel(holding(_))), bel(injuredLocatedAt(X,R), percept(in(R))) then goToBlock(X).  %15122016
+		
+		
+		if a-goal(atBlock(X)), not(bel(holding(_))), bel(injuredLocatedAt(X,R)), not(bel(in(R))) then goTo(R). 
+		
+		%13032016 added next line  21122016 moved this line down from line 391 to here
+		if bel(at('DropZone')), not(bel(holding(Ag))) then goTo('FrontDropZone').
+		
+		%06032016 if I collide and can't get into the room, ask the other agent to leave the room 05042016 change collision rules
+		%05042016  %21042016 added ,not(bel(onStretcher(Ag)))
+		if bel(state(collided), at(L)), a-goal(torescue(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(front_room(L,FL)), not(bel(onStretcher(Ag))) then send(O,youwaitat(FL)) + insert(collisionYouWait(O)).
+		%05042016 21042016 added delete(received(O,youwaitat(FL)))
+		if bel(state(collided), at(FL)), a-goal(torescue(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(front_room(L,FL), not(bel(onStretcher(Ag))), received(O,youwaitat(FL))) then drop(onStretcher(Ag), at(L), at(O,FL)) + adopt((onStretcher(Ag), at(FL))) + insert(collisionswap) + delete(received(O,youwaitat(FL))).
+		
+		%29042016 added next line, not sure if I really want the not(bel(gotStretcher(Ag))
+		if bel(state(collided), at(FL)), a-goal(torescue(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(front_room(L,FL)), not(bel(gotStretcher(Ag))) then drop(onStretcher(Ag), at(L), at(O,FL)) + adopt((onStretcher(Ag), at(FL))) + drop(atBlock(Ag)) + insert(collisionSwap).
+		
+		%29042016 other agent is ready to pick up, so I should swap roles
+		if bel(state(collided), at(FL)), a-goal(torescue(Ag,L,O,M)), bel(gotStretcher(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(front_room(L,FL)), bel(at(O,L)) then drop(onStretcher(Ag), at(L), at(O,FL)) + adopt((onStretcher(Ag), at(FL))) + insert(collidedswap).
+		
+		%05042016 if bel(state(collided)) then insert(clearRoom(L)) + clearRoom(L) +delete(state(collided)).
+		
+		%28032016 in case I collide with my partner at front of room, make clear I am waiting at front  %%%%KKKKK
+		if bel(received(O,youshouldgoin(L)), aSP(Ag,L,O,M)), a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), bel(front_room(L,FL)) then drop (onStretcher(Ag), at(FL)) + adopt(onStretcher(Ag), at(L), at(O,FL)) + insert(receivedsayingIshouldgoIn) + delete(received(O,youshouldgoin(L))).
+		if bel(state(collided)), a-goal(torescue(Ag,L,O,M), aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(FL)), a-goal(aSP(Ag)), bel(front_room(L,FL), at(FL)) then insert(clearRoom(L)) + clearRoom(L) +delete(state(collided)) + send(O,youshouldgoin(L)).
+		%29042016 in case I am blocking a room needed for another rescue I will be told to leave
+		if bel(received(O,imp(goTo('RightHallC')))) then goTo('RightHallC') + delete(received(O,imp(goTo('RightHallC')))).
+		
+		%06032016 copied next 2 lines from medic capabilities, 22042016 added not(bel(at(O,L)) to next 2 lines
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L)), a-goal(torescue(Ag,L,O,M)), bel(me(M), state(collided)), not(bel(at(O,L))) then insert(clearRoom(L)) + clearRoom(L) + delete(state(collided)).
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), state(collided)),  not(bel(at(O,L))) then insert(clearRoom(L)) + clearRoom(L) + delete(state(collided)).
+
+		% 25022016 added next 4 rules, 27032016 removed bel(front_room(L,FL)), from inside first a-goal 28032016 added not(bel(onStretcher(Ag))) to next 4 rules
+		%23042016 if a-goal(aSP(Ag)), not(bel(onStretcher(Ag))), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(FL)),  a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL)), not(bel(at(FL))) then goTo(FL) + insert(gointofr(FL)).
+		if a-goal(aSP(Ag)), not(bel(onStretcher(Ag))), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL)), not(bel(at(L))) then goTo(L) + insert(gointol(L)).
+		% 26022016 removed + adopt(atBlock(Ag)) from actionlist and removed check for received(O,gotStretcher(Ag))
+		%06052016 changed next line to check for not(bel(gotStretcher  rather than not(bel(received(gotStretcher)
+		if a-goal(aSP(Ag)), not(bel(onStretcher(Ag))), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), at(O,FL)), not(bel(at(L))),  not(bel(gotStretcher(Ag))) then goTo(L)  + insert(gottogetstretcher).
+		%26022016 removed + adopt(atBlock(Ag)) from actionlist
+		%if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), %front_room(L,FL), at(O,FL)), not(bel(received(O,gotStretcher(Ag)))), not(bel(at(L))) then goTo(L) + insert(gottogetstretcher).
+		%26022016
+		if a-goal(aSP(Ag)), not(bel(onStretcher(Ag))), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), at(O,L)), not(bel(at(FL))) then goTo(FL)  + insert(gottogetstretcher).
+		
+		%27032016 get ready to pick up stretcher - move to block, 29032016 add check if gotStretcher(Ag) . 05042016 added not(bel(onStretcher(Ag)))
+		%24072017 added next line
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M), gotStretcher(Ag)), not(bel(onStretcher(Ag))), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), at(L), at(O,FL)), bel(percept(atBlock(Ag))) then insert(goingtopickupblock(Ag)) + pickUp.
+		%02042017 changed order of insert and goToBlock, 25042017 added pickUp
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M), gotStretcher(Ag)), not(bel(onStretcher(Ag))), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), at(L), at(O,FL)) then insert(goingtoblock(Ag)) + goToBlock(Ag) + pickUp .
+		
+		%moved next few lines down from 295 to here 19042016
+		%if 2 agents collided at front room, perhaps both have goal at front room, so need to swap roles for one 31032016 06042016 added delete state collided at end of next line 01052016 4.50pm added not(bel(onStretcher(Ag)))
+		if bel(state(collided)), a-goal(torescue(Ag,L,O,M)), a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), bel(aSP(Ag,L,O,M), illgoTo(L)), not(bel(at(O,L))), not(bel(onStretcher(Ag))) then drop(onStretcher(Ag), at(FL)) + adopt(onStretcher(Ag), at(L), at(O,FL)) + delete(state(collided)) +insert(collidedswapping).  %09122016 added insert(collidedswapping)
+		%05042016 added next 3 lines 05042016 no good ignore them
+		%if bel(at(FL), at(O,FL)), a-goal(torescue(Ag,L,O,M)), a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), bel(aSP(Ag,L,O,M), illgoTo(L)), not(bel(at(O,L))), not(bel(received(O,illgoTo(L)))) then drop(onStretcher(Ag), at(FL)) + adopt(onStretcher(Ag), at(L), at(O,FL)).
+		%if bel(at(FL), at(O,L)), a-goal(torescue(Ag,L,O,M)), a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), bel(aSP(Ag,L,O,M), illgoTo(L)) then delete(illgoTo(L)) + send(O,illwaitat(FL)) + send(O,delete(illgoTo(L))).
+		%f bel(received(O,delete(illgoTo(L))), received(O,illgoTo(L))) then delete(received(O,illgoTo(L))) + delete(received(O,delete(illgoTo(L)))).
+		
+		%18072017 added this repeated line to catch percept mid cycle
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+		
+		%moved this next line from medic capabilities.   
+		%update beliefs
+		forall bel(injured(Ag), at(Ag,L), checked(L)) do  
+			insert(injuredLocated(Ag)) + insert(injuredLocatedAt(Ag,L)). 
+		
+		%08092016 update own beliefs about injuredLocated
+		forall bel(injuredLocated(Ag)), not(bel(injured(Ag))), not(bel(seriouslyinjured(Ag))) do delete (injuredLocated(Ag)).
+		forall bel(injuredLocatedAt(Ag,L)), not(bel(injured(Ag))), not(bel(seriouslyinjured(Ag))) do delete (injuredLocatedAt(Ag,L)).
+		
+		%06052016
+		forall bel(seriouslyinjured(Ag), at(Ag,L), checked(L)) do  
+			insert(injuredLocated(Ag)) + insert(injuredLocatedAt(Ag,L)).
+			
+		
+		
+		%22022016 seems premature to declare rescued this way. forall bel(injuredLocatedAt(A,L), not(injured(A))) do insert(rescued(A)). %19022016 20022016 moved here outside loop below
+		%31082016 added condition that only send to others in myorg below: myorg(Org), orgMember(Org,Ag)
+		% sending progress update to other responsible for objectives NOTE this only sends to others in roles responsible, eventually this should change to send to all in org  29012016 this doesn't seem to work for last room checked probably because the injuredLocatedLmk is dropped so on 19042016 added rule repeating for injuredRescuedLmk
+		%24032016 changed to use separate module sharebeliefs rather than have a number of lines in brackets following do
+		%21112016 comment out next line to turn off shared beliefs   toggle on/off
+		forall a-goal(consider(Me,injuredLocatedLmk,Sc)), bel(me(Me), rea(Ag,R,Sc), responsible(injuredLocatedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do sharebeliefs(Ag).
+		%19042016 repeat above rule sharing to all agents responsible for injuredRescuedLmk
+		% share beliefs with all agents enacting a role in the scene who are responsible for injuredRescuedLmk
+		%2112016 comment out next line to turn off shared beliefs toggle on/off
+		forall a-goal(consider(Me,injuredRescuedLmk,Sc)), bel(me(Me), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do sharebeliefs(Ag).
+		%05092016 if I have created an org with an officer to carry a stretcher, then I need to ensure that I tell that officer when I have put down the block and rescued it, as well as others in my org, added next 2 rules:  
+		%21112016 comment out next line to turn off shared beliefs
+		%21072017 consider toggle off next line not sharing beliefs
+		forall a-goal(consider(Me,rescueOnStretcherLmk,Sc)), bel(me(Me), rea(Ag,R,Sc), responsible(rescueOnStretcherLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)) do sharebeliefs(Ag).
+		%21112016 comment out next line to turn off shared beliefs
+		%21072017 consider toggle off next line not sharing beliefs
+		forall a-goal(consider(Me,rescueOnStretcherLmk,Sc)), bel(me(Me), rea(Ag,R,Sc), Ag\=Me, myorg(Org), responsible_org(Org,rescueOnStretcherLmk,Sc,R), orgMember(Org,Ag)) do sharebeliefs(Ag).		
+		
+		% if I am holding X and have the goal to rescue, tell others who are responsible that I am rescuing X, 
+		% changed to If I am rescuing X, inform others who share responsibility for rescue (don't worry about if I still have the goal to rescue)
+		% create belief that I have informed others I have rescued X
+		% Role R is responsible for rescuing injured in Scene Sc, and role enacting agent Ag is in role R, so send message to Ag.
+		% forall a-goal(consider(Me,injuredRescuedLmk,Sc)), bel(me(Me), rescued(X), not(informed(rescued(X)))) do 
+		
+		%share beliefs about rescued injured with appropriate others - in roles responsible in scene, or in adhocracy/orgs
+		%24032016 reduce to one forall next 2 rules 2603 use only one bel statement
+		%310082016 added myorg(Org), orgMember(Org,Ag) so only share beliefs with agents in my organization
+		% 08092016 remove + insert(informed(rescued(X))) from first 2 versions of this rule so that all policies are implemented
+		%21112016 comment out next line to turn off shared beliefs about rescue completion
+		%03012017 commented out this line for crisisMap4-NotSharingBeliefs runs put it in for runs notsharingbeliefsButDoShareRescueCompletion
+		%09012017 comment out next line
+		%21072017 consider toggle off next line for not sharing rescue completion. 31072017 added + insert(informed(rescued(X)))
+		forall bel(me(Me), rescued(X), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)), not(bel(informed(rescued(X)))) do  send(Ag, rescued(X)). %07092017+ insert(informed(rescued(X))).
+		
+		%31032017 sharing intention to rescue, ie an adopted shared plan to rescue aSP
+		%21072017 toggle off 
+		forall bel(me(Me), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)), a-goal(aSP(A)) do  shareAdoptedSP(Ag, A). %31032017 added module shareAdoptedSP(Ag, A)
+
+		%02042017 share with all agents in an org that I am in with responsibility for injuredRescuedLmk
+		%21072017 toggle off 02082017 toggle on
+		forall bel(me(Me), myorg(Org), orgMember(Org,Ag), org(Org,Lmks,Members,Roles,P,N), member(injuredRescuedLmk,Lmks), Ag\=Me), a-goal(aSP(A)) do  shareAdoptedSP(Ag, A).
+		
+		%21072017 wondering if I should also share actual actions - like I am doing this rescue now when the block is on the stretcher? That could trigger others to give up on the same goal quicker KKK
+		
+		%26032016 put on one line and one bel statement
+		%31082016 added myorg(Org), orgMember(Org,Ag)
+		% removed + insert(informed(rescued(X)))
+		%21112016 comment out next line to turn off shared beliefs
+		%03012017 
+		%21072017 toggle off next line to stop sharing beliefs about rescue completion to others in my org
+		forall bel(me(Me), injuredRescued(X), rea(Ag,R,Sc), responsible(injuredRescuedLmk,Sc,R), Ag\=Me, myorg(Org), orgMember(Org,Ag)), not(bel(informed(rescued(X)))) do send(Ag, rescued(X)) + insert(rescued(X)).
+		
+		%08092016 share beliefs with others in any adhocracy or org created ie. not necessary to check rea and responsible
+		% should we be checking that Org=rescueOrg on next line?
+		%21112016 comment out next line to turn off shared beliefs about completion of rescue
+		%03012017 
+		%21072017 toggle off next line to stop sharing beliefs about rescue completion to those in my org
+		forall bel(me(Me), injuredRescued(X),  myorg(Org), orgMember(Org,Ag), Ag\=Me), not(bel(informed(rescued(X)))) do send(Ag, rescued(X))+ insert(informed(rescued(X))) + insert(rescued(X)).
+		
+		%07092017 could add next line for case where there are no orgs, will only run if not already informed(rescued(X)) so should only fire when no medic org exists if want to share completion of rescue
+		%toggle this line on 10092017
+		forall bel(me(Me), injuredRescued(X),  rea(Ag,medic,rescueInjuredSc), Ag\=Me), not(bel(informed(rescued(X)))) do send(Ag, rescued(X))+ insert(informed(rescued(X))) + insert(rescued(X)).
+		%07092017 some kind of bug where didn't inform partner of rescue fix
+		if bel(iputitdown(X), gotStretcher(X), coordinatingstretcherwith(O,L,X)), not(bel(informed(rescued(X)))) then send(O, rescued(X)).
+		
+		 %next 7 lines added 02032016 KKEOGH 24032016 reduced to one forall 2603 reduce to one bel ()
+		 %explicitly tell others in my organisation my location where I am, if we are engaged in a shared plan together and are both responsible for rescue
+		 forall bel(me(Me), aSP(InjAgent,Loc,Ag,Me), at(L), agent(Ag), myorg(MOrg), org(MOrg, _, Members, _,_,_ ), member(Ag, Members), rea(Ag, Role, Sc), responsible(injuredRescuedLmk,Sc,Role), Ag\=Me) do send(Ag, at(Me,L)). 
+			
+		%update my beliefs on location of another agent 13032016 added delete(at(O,X)) 2603 added bel(at(O,X))		
+		if bel(received(O,at(O,L)), at(O,X)) then delete(at(O,X)) + insert(at(O,L)) + delete(received(O,at(O,L))).  
+		
+		%moved from here putdown commands to earlier in this module
+		
+		%18072017 added this repeated line to catch percept mid cycle
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+		
+	% when I believe search objectives are completed, but haven't triggered reached on the landmark, then say they are reached.
+		if a-goal(injuredLocatedGoal), bel(checkedRooms, not(reached(injuredLocatedLmk))) then insert (reached(injuredLocatedLmk)).
+		if a-goal(injuredRescuedGoal), bel(injuredRescued, not(reached(injuredRescuedLmk))) then insert(reached(injuredRescuedLmk)).
+		
+				
+		%05042016 copied next line from medic capabilities to here, added + drop(onStretcher(Ag), at(L), at(O,FL)). 06052016 added + delete(received(O,gotStretcher(Ag))
+		%02042017 changed order of pickUp to end of rule below. %26042017 moved pickup back to start following then 07052017 changed atBlock(Ag) to bel(percept(atBock(Ag))
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), gotStretcher(Ag), received(O,gotStretcher(Ag)), percept(atBlock(Ag))) then pickUp + insert(iwillpickUp(Ag))  + send(O,iwillpickup(Ag)) + delete(received(O,gotStretcher(Ag))). % + pickUp. % + insert(onStretcher(Ag)) +send(O,onStretcher(Ag)) + send(O,!goTo('FrontDropZone')) + drop(atBlock(Ag)) + drop(onStretcher(Ag), at(L), at(O,FL)).
+		%07052017 added next rule
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), gotStretcher(Ag), received(O,gotStretcher(Ag)), atBlock(Ag)) then pickUp + insert(iwillpickUpBlock(Ag))  + send(O,iwillpickup(Ag)) + delete(received(O,gotStretcher(Ag))).
+		
+		%05042016 took + adopt(holding(Ag), in("DropZone"))  from above line into separate rule. 24042016 removed bel(in(L)), from next 2 rules
+		%27042016 added test for a-goal(onStretcher(Ag), at(L), at(O,FL)) and the drop(onStretcher(Ag), at(L), at(O,FL))
+		%31032017 changed next line to add in not(a-goal(together(FL,O,M))), so that it will work with stretcher delegation 21072017 removed the not(a-goal(together(FL,O,M)))
+		if a-goal(aSP(Ag)), a-goal(torescue(Ag,L,O,M)),  a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(me(M),  onStretcher(Ag), holding(Ag)) then adopt(holding(Ag), in("DropZone")) + insert(onStretcherRescueunderway(Ag)) + drop(onStretcher(Ag), at(L), at(O,FL)).
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M),  onStretcher(Ag)) then adopt(at("FrontDropZone")) + drop(onStretcher(Ag), at(FL)) + insert(onStretcherRescuegoingahead(Ag)).
+		
+		%31032016 if I was waiting for stretcher, now have stretcher, move on
+		if bel(waiting(L)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(onStretcher(Ag)) then delete(waiting(L)).
+		if bel(waiting(FL)), a-goal(onStretcher(Ag), at(FL)), bel(onStretcher(Ag)) then delete(waiting(FL)).
+		
+		% 20062014 kkkkkkk should these 2 lines be in main module?
+		% should the following lines involve adopt(at(L)) or instead be just a goto(L) ?		
+		%added kkeogh 02062014  if another agent asks me to clear the dropzone, then I will oblige
+		%if bel(received(Ag, imp(at('FrontDropZone')))) then adopt(at('FrontDropZone')).
+		% if agent asks me to clear a room I should also do that...( then remove the request received 19062014)
+		if bel(received(Ag1, imp(at(L)))) then goTo(L) + delete (received(Ag1,imp(at(L)))) +insert(goingtoat(L,Ag1)). %adopt (at(L)).
+		%07032016  11032016 added not bel holding to next 2 rules 29032016 also added not(bel(onStretcher(Ag))), 30032016 removed , not(bel(onStretcher(Ag))) from next line 31032016 added insert(waiting(FL)) 05042016 added not(bel(onStretcher(Ag), not(bel(at(FL))) 24042016 added not(bel(gotStretcher(Ag)))
+		if not(bel(holding(Ag))), bel(received(O, imp(goTo(FL)))), not(bel(onStretcher(Ag))), not(bel(at(FL))), bel(aSP(Ag,L,O,M), front_room(L,FL)), a-goal(onStretcher(Ag), at(L), at(O,FL)), not(bel(gotStretcher(Ag))) then drop (onStretcher(Ag), at(L), at(O,FL)) + adopt(onStretcher(Ag), at(FL)) + goTo(FL) + delete(received(O, imp(goTo(FL)))) + insert(fixupgoalwaitat(FL)) + insert(waiting(FL)).
+		%31032016 added + waiting(FL)  05042016 added not(bel(onStretcher(Ag)), not(bel(at(FL))) 24042016 added not(bel(gotStretcher(Ag)))
+		if  not(bel(holding(Ag))), not(bel(onStretcher(Ag))), not(bel(at(FL))), bel(received(O, imp(goTo(FL))), aSP(Ag,L,O,M), front_room(L,FL)), not(bel(gotStretcher(Ag))) then adopt(onStretcher(Ag), at(FL)) + goTo(FL) + delete(received(O, imp(goTo(FL)))) + insert(fixupgoalwaitat(FL)) + insert(waiting(FL)).
+		%if another agent asks me to go somewhere, then do so, unless am holding a block in the dropzone and waiting
+		%10032016 added the check for not(bel(holding(A), in('DropZone'), waiting)) to next line
+		%13032016 added check that I am actually engaged in a SP with agent Ag2, otherwise, I don't want to priorise this.
+		%24032016 added check me(M) on next rule  27032016 added adopt(at(X)) on next line 24042016 removed  + goTo(X) cause it was happening too fast  %06052016 added not(bel(rescued(Ag))),
+		if bel(received(Ag2, imp(goTo(X))), aSP(Ag,L,Ag2,M), me(M)), not(bel(rescued(Ag))), not(bel(holding(A), in('DropZone'))), not(bel(waiting)) then adopt(at(X))  + delete (received(Ag2,imp(goTo(X)))) +insert(goingtofor(X,Ag2)).
+		%31072017 6.07pm if another agent is waiting for me to adopt a SharedPlan and I am busy on another rescue, tell them  02082017 removed not(a-goal(aSP(Ag)))  added B\=Ag
+		if bel(received(Ag2, imp(goTo(X))), received(Ag2,adopt(aSP(Ag,L,Ag2,M))), me(M), received(Ag2,onStretcher(Ag))),  a-goal(aSP(B), B\=Ag) then send(Ag2,notavail(M)).
+		
+		%29032016 not sure how this happens, but seems to be needed in some case:, 31032016 added a-goal(aSP(A)), so that we don't go to dropzone for old case 24042016 added delete(goingtofor('FrontDropZone',Ag2))
+		%27042016 removed from next rule (was happening too fast) + goTo('FrontDropZone')
+		if bel(goingtofor('FrontDropZone',Ag2)), bel(aSP(A,L,Ag2,M), me(M), onStretcher(A)), a-goal(torescue(A,L,Ag2,M)), a-goal(aSP(A)), not(a-goal(onStretcher(A), at(FL))) then adopt(at('FrontDropZone'))  + delete(goingtofor('FrontDropZone',Ag2)).
+		
+		%changed if to forall on next line kk 19062014, changed injuredLocated to injuredLocatedGoal
+		forall a-goal(injuredLocatedGoal), a-goal(in(Y)), bel(checked(Y)) do drop(in(Y)). 
+		%10062014 next line added to keep track of injured as a belief
+		
+		forall bel(received(Ag, injuredLocatedAt(Ag, X))) do 
+			insert(injuredLocatedAt(Ag,X)) +
+			delete(received(Ag, injuredLocatedAt(Ag,X))). 
+			
+		forall bel(received(Ag, injuredLocated(X))) do  
+			insert(injuredLocated(X)) +  
+			delete(received(Ag, injuredLocated(X))). 
+			
+		
+		forall bel(received(Ag, color(N,C,P))) do   
+			insert(color(N,C,P)) + 
+			delete(received(Ag, color(N,C,P))). 
+			
+			
+		%18072017 added this repeated line to catch percept mid cycle
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+
+		%do we need to also hardcode that the belief about checked rooms is important to share with other medics in the organisation? 27072015
+	
+		%22jul2015 move next line to awaremedic in event module from medic capabilities locate injured 
+		if a-goal(checkedRoomsGoal), not(bel(room(R), not(checked(R)))), not(bel(checkedRooms)) then insert(checkedRooms) + drop (checkedRoomsGoal).
+		if a-goal(checkedRoomsGoal), bel(checkedRooms) then drop (checkedRoomsGoal). %27072015
+		
+		% if receive a message from agent Ag to say N is rescued, drop any goals associated with rescueing N myself.
+		%02042017 unless I am actually holding N in the process of rescuing N myself
+		forall bel(received(Ag, rescued(N))), not(bel(rescued(N))), not(bel(holding(N))) do insert(rescued(N)) + delete(received(Ag, rescued(N))).
+		%forall bel(rescued(N)), a-goal(holding(N),in(X)) do  drop(holding(N),in(X)) + drop(atBlock(N),in(X)).
+		% once N is rescued, delete any beliefs about N in terms of it's location (ie. so it no longer exists as injured) and delete message received.
+		%forall bel(received(Ag, rescued(N))), bel(color(N,C,P)) do delete(color(N,C,P)).
+		%08052016 if rescue completed by another agent, I can drop goal to head to that room
+		forall bel(rescued(N)), bel(injuredLocatedAt(N,P)), a-goal(at(P)) do delete(injuredLocatedAt(N,P)) + drop(at(P)).
+		forall bel(rescued(N)), bel(injuredLocatedAt(N,P)) do delete(injuredLocatedAt(N,P)).
+		forall bel(rescued(N)), bel(injuredLocated(N)) do delete(injuredLocated(N)).%20062014
+		forall bel(rescued(N), color(N,C,L)) do delete(color(N,C,L)) + insert(belrescued(N)). %23062014
+		
+		%07102016 to update beliefs to be consistent to percepts regarding injured added next 2 lines
+		if bel(injuredLocatedAt(A,L)), not(bel(injured(A))), not(bel(seriouslyinjured(A))) then delete(injuredLocatedAt(A,L)) +insert(notedInjuredNoLonger(A,L)).
+		if bel(injuredLocated(A)), not(bel(injured(A))), not(bel(seriouslyinjured(A))) then delete(injuredLocated(A)) + insert(notedNotInjuredLocated(A)).
+		%still a possibility that agent has inconsistent beliefs - ie. no longer injured, but not having rescued(X) set as a belief - not sure if we should introduce a rule to 'presume' rescue if injured has disappeared? ie. add insert(rescued(A)) on 2 rules above.?
+		
+		%22-01-2016 when rescue complete drop any associated sharedplans goals and beliefs
+		forall bel(rescued(N)), a-goal(aSP(N)) do drop(aSP(N)).
+		forall bel(rescued(N), aSP(N,A,B,C)) do delete(aSP(N,A,B,C)).
+		
+		%kk 18062014 if you/someone has rescued injured, no longer have it as a goal to rescue this injured
+		forall a-goal(holding(N), in(X)), bel(rescued(N)) do drop(holding(N), in(X)). 
+		forall a-goal(atBlock(X), in(R)), bel(rescued(X)) do drop(atBlock(X), in(R)).
+		forall a-goal(atBlock(X)), bel(rescued(X)) do drop(atBlock(X)).	
+		%11032016
+		forall a-goal(atBlock(X)), bel(holding(X)) do drop(atBlock(X)).			
+		
+		%next two lines added 13072015 kkeogh
+		forall a-goal(torescue(X,L,O,M)), bel(rescued(X)) do drop(torescue(X,L,O,M)).
+		forall a-goal(rescueOnStretcherGoal(X,L,M,O)), bel(rescued(X)) do drop(rescueOnStretcherGoal(X,L,M,O)).
+		
+		
+		%08022016. 20042016 change rescueOnStretcherPlan to rescueStretcherPlan 30042016 added in the together on Stretcher
+		forall a-goal(rescueStretcherPlan(X,L,O,M), together(FL,O,M), onStretcher(X) ), bel(rescued(X)) do drop(rescueStretcherPlan(X,L,O,M), together(FL,O,M), onStretcher(X)).
+		
+		%18082016 added bel(checkedRooms) to next line
+		if a-goal(injuredRescuedGoal), not(bel(injuredLocatedAt(X,_))), bel(checkedRooms) then insert(injuredRescued) + insert(checkedRescuedNoInjured). %added 2306 should this be here or in rescueInjured?
+		
+		%update beliefs on reached objectives based on information received from other agents in the scene I am involved in, then delete message received.
+		if bel(received(Ag, reached(Objective, Scene)), me(Me), rea(Me, _, Scene)) then insert(reached(Objective)) + delete(received(Ag, reached(Objective, Scene))).
+		
+		% maybe this is too naive (should the agent really just insert this belief if a dependee sends such message?)
+		if bel(received(Ag, reached(Objective)), rea(Ag,AR,Sc), me(Me), rea(Me,R,Sc), dependency(Ag,AR,Objective,_)) then insert(reached(Objective)) + delete(received(Ag, reached(Objective))).
+
+		%should next 3 lines be in event module? 20062014, yes 2306 moved from main module to here
+		%next 3 lines copied from unaware medic kk10062014 injuredLocatedLmk changed to InjuredLocatedGoal changed if to forall
+		forall a-goal(injuredLocatedGoal), bel(checked(R), room(R)) do insert(checkedForInjured(R)).
+		
+		
+		%16072015 drop rescue goal 17072015 delete sharedplanbelief associated with this goal
+		if a-goal(rescueOnStretcherGoal(Ag,L,M, O)), bel(rescued(Ag)) then drop(rescueOnStretcherGoal(Ag,L,M, O)) + delete(aSP(Ag,L,O,M)) +insert(deletingaSPbecauserescued).
+		%might need a similar rule to above if another agent sends message to say they will adopt that plan to do the rescue, then I should drop that rescue plan
+				
+		% I have reached an landmark objective (that I was considering...) so drop that objective and tell others in the scene it is reached
+		%inform all other agents in scene when I have reached objective
+		 % if objective is completed, I don't need to consider doing it
+		 
+		 %toggle on off for policy?
+		%forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do {
+		%	drop(consider(Ag,Objective,Sc)). 
+		%	forall bel(me(Me), rea(REA,_,Sc), REA\=Me) do { send(REA, :reached(Objective, Sc)). } 	
+		%}
+		
+		%24032016 split above rule into 2 one line rules
+		%share beliefs about reached objectives with related other agents who are enacting a role related to this scene 
+		%07102016 toggle next 2 rules off - don't share with everyone in scene, just those in my org
+		%07102016 forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)), bel(me(Me), rea(REA,_,Sc), REA\=Me) do  send(REA, :reached(Objective, Sc)). 
+		%07102016 forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do drop(consider(Ag,Objective,Sc)). 
+			
+		%share beliefs about reached objectives with related other agents who are enacting a role related to this scene and responsible for this objective in an org with me 07102016 added this line to represent policy of sharing appropriate completion of tasks only with others in my orgs and having responsibility for the tasks
+		%21112016 comment out next line to turn off shared beliefs about completion of tasks
+		%21072017 toggle on/off to share/not reached status on objectives
+		forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)), bel(me(Me), rea(REA,R,Sc), REA\=Me, myorg(MyOrg), org(MyOrg,Lmks,Members,Roles,_,_), member(Objective,Lmks), member(R,Roles), member(REA, Members), responsible(Objective,Sc,R) ) do  send(REA, :reached(Objective, Sc)). 
+		forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do drop(consider(Ag,Objective,Sc)). 
+		
+		%24032016
+		%forall a-goal(consider(Ag,Objective,Sc)), bel(reached(Objective)) do {
+		%	if true then drop(consider(Ag,Objective,Sc)). 
+		%	forall bel(me(Me), rea(REA,_,Sc), REA\=Me) do { send(REA, :reached(Objective, Sc)). } 	
+		%}
+		
+		%18072017 added this repeated line to catch percept mid cycle
+		if a-goal(holding(Ag), in('DropZone')), not(bel(holding(X))), bel(injuredLocatedAt(Ag,R), percept(atBlock(Ag))) then pickUp.
+		
+		%kk 19062014
+		if a-goal(atBlock(X), in(R)), bel(reached(rescuedInjuredLmk)) then drop (atBlock(X), in(R)).
+		if a-goal(holding(X), in(R)), bel(reached(rescuedInjuredLmk)) then drop (holding(X), in(R)).
+		
+		%if bel(reached(ObjLmk)), a-goal(ObjGoal) then drop(ObjGoal). % kk 16062014 if have reached objective, drop goal
+		if bel(reached(injuredLocatedLmk)), a-goal(injuredLocatedGoal) then drop (injuredLocatedGoal).
+		if bel(reached(injuredRescuedLmk)), a-goal(injuredRescuedGoal) then drop (injuredRescuedGoal).
+		
+		%02032016,03032016 copied next 3 lines to aware medic 11032016 moved these 3 lines higher up from line 516 to 412
+		% if we had a goal to rescue and I have injured agent ready to drop off, then if you are waiting at frontdropzone, then I will consider drop ready and putdown injured agent. 19022016 added +insert rescued(Ag) to next line 03032016 added + send(O,rescued(Ag)) to next line 10-03-2016 removed + goTo('FrontDropZone')  from next line
+		if a-goal(torescue(Ag,L,O,M)), bel(holding(Ag), me(M), at('DropZone'), at(O,'FrontDropZone')) then putDown +  insert(iputdownDropZone(Ag)) + insert(rescuedtogether(Ag)) + insert(injuredRescued(Ag)) + drop(torescue(Ag,L,O,M)). %10032016 + insert(rescued(Ag)) + send(O, rescued(Ag)).
+		%10032016 if a-goal(torescue(Ag,L,O,M)), bel(at(O,'DropZone'), at('FrontDropZone')) then insert(rescuedtogether(Ag)) +insert(injuredRescued(Ag)) +drop(torescue(Ag,L,O,M))  27012017 + send(O,rescued(Ag)) .
+		 
+		%might need to check if haven't already adopted the request e.g. not a-goal(adopt(rescueOnStretcher....) 0408 added check for not a bel agreedSP
+		%send request to OtherAgent to agree to adopt joint task RescueOnStretcher. 15072015 removed int() before proposeToadopt on next 2 lines of code
+ 		%24-01-2016 should we be deleting check for not(bel(sent(...) below to allow for later repeat proposals following another rescue?
+		if bel(proposeToadopt(rescueOnStretcherLmk(InjAgent,Loc,OtherAgent,Me)), me(Me)), not(bel(sent(OtherAgent,proposeToadopt(rescueOnStretcherLmk(InjAgent,Loc,OtherAgent, Me))))), not(bel(aSP(Ag,L,O,Me))) then send(OtherAgent,proposeToadopt(rescueOnStretcherLmk(InjAgent,Loc,OtherAgent, Me))).
+
+		%18082015 changed order in send to InjAgent,Loc,OtherAgent,Me rather than Me,OtherAgent
+		%answer request or proposal from another agent to agree to adopt joint task RescueOnStretcher, 16072015dont agree to adopt if any other agent has already informed that they have proposed to do this, also don't do this if already have belief of an existing sharedplan 04082015
+		%31102016 changed InjAgent to Ag on next 2 rules, following changed Ag to Ag1 in next 2 rules. Also changed Loc to L   01082017 added not bel (sent(OtherAgent,agreeToadopt...)
+		if not(bel(aSP(Ag1,L1,O1,Me))), bel(proposeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me)), me(Me), received(OtherAgent,proposeToadopt(rescueOnStretcherLmk(Ag,L,Me,OtherAgent)))), not (bel(received(AnyOtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,_,_)))) ), not(bel(sent(OtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me))))) then send(OtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me)))+insert(agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me))). 
+		if not(bel(aSP(Ag1,L1,O1,Me))), bel(proposeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me)), me(Me), received(OtherAgent,proposeToadopt(rescueOnStretcherLmk(Ag,L,Me,OtherAgent)))), not (bel(received(AnyOtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,_,_))))), not(bel(sent(OtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me))))) then send(OtherAgent,agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me)))+insert(agreeToadopt(rescueOnStretcherLmk(Ag,L,OtherAgent,Me))). 
+		
+		%24032016 remove brackets from next rule below
+		%notify all agents in myorg who are responsible for rescue injured that i have agreed to rescueon stretcher injuredagent InjAgent
+		%forall bel(me(Me), agreeToadopt(rescueOnStretcherLmk(InjAgent,Loc,HelperAgent, Me))) do 
+		%	forall bel(agent(Ag), myorg(MOrg), org(MOrg, _, Members, _,_,_ ), member(Ag, Members), rea(Ag, Role, Sc), responsible(injuredRescuedLmk,Sc,Role), Ag\=Me) do 
+				%	 insert(informed(Ag, agreeToadopt(rescueOnStretcherLmk(InjAgent, Loc, HelperAgent, Me)))) + send(Ag, agreeToadopt(rescueOnStretcherLmk(InjAgent, Loc, HelperAgent, Me))). 
+		%24032016 reduce above rule to one forall rule
+		
+		%KK 23092016
+		%toggle this next rule on and off to see effect of agents sharing intentions with other agents when they have agreement to do a shared rescue
+		% 31102016 changed Ag to A on next 2 rules, changed InjAgent to Ag on next 2 rules, changed Members to Members1
+		%31102016 could change next rules to refer to Members from parameters at start of module 
+		%27072017 added not(bel(informed(A, agreeToadopt(rescueOnStretcherLmk(Ag, Loc, HelperAgent, Me)))))
+		forall bel(me(Me), agreeToadopt(rescueOnStretcherLmk(Ag,Loc,HelperAgent, Me)), agent(A), myorg(MOrg), org(MOrg, _, Members, _,_,_ ), member(A, Members), rea(A, Role, Sc), responsible(injuredRescuedLmk,Sc,Role), A\=Me), not(bel(informed(A, agreeToadopt(rescueOnStretcherLmk(Ag, Loc, HelperAgent, Me))))) do 
+					 insert(informed(A, agreeToadopt(rescueOnStretcherLmk(Ag, Loc, HelperAgent, Me)))) + send(A, agreeToadopt(rescueOnStretcherLmk(Ag, Loc, HelperAgent, Me))). 
+					 	
+		
+		%agreeToadopt(rescueOnStretcherLmk(Injured, LocationInjured, OtherAgent, Me)
+		%update beliefs on rescue stretcher intentions based on information received from other agents in my organisation I am involved in, then delete message received.
+		if bel(received(A, agreeToadopt(rescueOnStretcher(Ag,Loc,HelperAgent,OtherAgent), me(Me), myorg(MOrg), org(MOrg,_,Members,_,_,_), member(A, Members)))) then insert(agreeToadopt(rescueOnStretcherLmk(Ag,Loc,HelperAgent,OtherAgent))) + delete(received(A, agreeToadopt(rescueOnStretcher(Ag,Loc,HelperAgent,OtherAgent)))).
+
+		
+		
+		%complete the agreement regarding adopting a shared plan must have agreement from other to adopt the sharedplan also
+		%27072015 added last +send, 18082015 added Ag\=Ag1
+		% if have received adopt confirmation and haven't already created belief for this plan, check we don't have already another plan as a belief, then send adopt acknowledgement message. 02082015 added check for no existing belief on this or another sharedplan (Ag1 may or may not equal Ag) . 10-03-2016 removed bel(Ag\=Ag1) on next line 03012017 added not(bel(agreeToadopt(rescueOnStretcherLmk(Ag2,L2,O2,M))) should i instead be checking in a new line at 719 if bel(agreeToadopt(rescueOnStretcherLmk(Ag2,L2,O2,M))) then insert(aSP(Ag,L,O,M)) +send(O,adopt(aSP(Ag,L,O,M))) . %KKKKKK03012017  23082017 added check for not(bel(sent(O3,adopt(aSP(Ag3,L3,O3,M))))) and added send(O,avail(M)) 09092017 added bel(seriouslyinjured(Ag))
+        if bel(received (O,adopt(aSP(Ag,L,M,O)))), not(bel(aSP(Ag1,L1,O1,M))), not(bel(sent(O3,adopt(aSP(Ag3,L3,O3,M))))) , not(bel(agreeToadopt(rescueOnStretcherLmk(Ag2,L2,O2,M)))), not(bel(rescued(Ag))), bel(seriouslyinjured(Ag)) then insert(willadopteagreedSharedPlan(Ag,O)) + insert(aSP(Ag,L,O,M)) +send(O,adopt(aSP(Ag,L,O,M))) + send(O,avail(M)) .
+ 
+		%07092017 added next line   09092017 added bel(seriouslyinjured(Ag))
+		if bel(received(O,adopt(aSP(Ag,L,M,O))), me(M)), bel(seriouslyinjured(Ag)), bel(avail(O)), bel(onwaytoagreedSP(Ag,O)), not(a-goal(aSP(Y))),  not(bel(rescued(Ag))), bel(seriouslyinjured(Ag)), not(bel(aSP(_,_,_,M))) then insert(belagreedSP(Ag,O)) +insert(aSP(Ag,L,O,M)) + send(O,adopt(aSP(Ag,L,O,M))) + send(O,avail(M)).
+		%25082017 550pm added next line copied from medic_capabilities, 09092017 added bel(seriouslyinjured(Ag)) 
+		if bel(received(O,adopt(aSP(Ag,L,M,O))), me(M)), bel(seriouslyinjured(Ag)), bel(avail(O)), not(a-goal(aSP(Y))),  not(bel(rescued(Ag))), bel(seriouslyinjured(Ag)), not(bel(aSP(_,_,_,M))) then insert(belagreedSP(Ag,O)) +insert(aSP(Ag,L,O,M)) + send(O,adopt(aSP(Ag,L,O,M))) + send(O,avail(M)).
+		
+		% do we need to check that the agents both adopted the right shared plan? ie. if agent sent an adopt(agreedSharedPlan... then they have to agree to that plan
+		
+		 %moved here to event module in awaremedic.goal file 26072015, 19012016 changed not bel rescued to bel injured, 22-01-2016 shorten adopt(aSP(Ag))) 01-02-2016 do we need to check have received confirm msg adopt (aSP ) also here ? 02022016 added check receive(adopt..)
+		 %290122016 added +send(O,adopt(aSP(Ag,L,O,M)))  23022016 added not(a-goal(aSP(X)))
+		 %24022016 remove this line %04042016 added next line back in, 05042016 added condition X\=Ag. 02082017 added +send(O,avail(M)) 31082017 added not(bel(receivedDropSP(Ag))), 09092017 added bel(seriouslyinjured(Ag))
+		 if bel(aSP(Ag,L,O,M), me(M)), not(bel(rescued(Ag))), not(a-goal(aSP(X))), bel(X\=Ag), bel(seriouslyinjured(Ag)), not(bel(receivedDropSP(Ag))) then adopt(aSP(Ag)) + insert(nowAdoptedAgreedSP(Ag)) +send(O,adopt(aSP(Ag,L,O,M))) +send(O,avail(M)).
+		 %230220216 might need to check in case 2 agents simultaneously adopt and send each other an adopt message, that one agent gives up and instead adopts the proposed adopt or perhaps just delete this above rule altogether?
+		 
+		 %24-11-2015 comment out below line
+		 %if bel(sent(O,adopt(aSP(Ag,L,O,M)))), bel(received(O,adopt(aSP(Ag,L,M,O)))), bel(me(M)), bel(aSP(Ag,L,O,M)), not(bel(rescued(Ag))) then adopt(aSP(Ag)) + insert(ihaveAdoptedSP(Ag,L,O,M)).
+	
+		%moved code of next 2 rules (now commented out) from here to medic capabilities
+		%18022016 if another agent wants to set up a SP with me I should respond by adopting a goal for this. Circumvents the whole propose/adopt, do we need to check first that there is not an existing bel(agreeToadopt(rescueStretcherLmk(Ag,B,C,D)))?
+		%if bel(received(O,aSP(Ag,L,M,O))), not(bel(aSP(Ag1,L1,M,O1))), not(bel(rescued(Ag))) then adopt(rescueOnStretcherGoal(Ag,L,M, O))+insert(rescueOnStretcherLmk(Ag,L,O, M))+insert(rescueStretcherPlan(Ag,L,O,M)) + insert(agreeToadopt(rescueStretcherLmk(Ag,L,O,M)))+insert(jumpingToagreedSP(Ag,O)).
+		% if I have circumvented the propose/adopt cycle and responded to a request aSP, then I should prioritise this new aSP so delete other existing aSP beliefs
+		%if bel(received(O,aSP(Ag,L,M,O))), bel(aSP(Ag1,L1,M,O1)), not(bel(rescued(Ag))) then adopt(rescueOnStretcherGoal(Ag,L,M, O))+insert(rescueOnStretcherLmk(Ag,L,O, M)) + insert(rescueStretcherPlan(Ag,L,O,M)) + insert(agreeToadopt(rescueStretcherLmk(Ag,L,O,M))) + delete(aSP(Ag1,L1,M,O1)).
+	
+		%14082017 7.15pm  insert next line. 31082017 added not(bel(receivedDropSP(Ag))). 09092017 added bel(seriouslyinjured(Ag))
+		if bel(sent(O,adopt(aSP(Ag,L,O,M)))), bel(received(O,adopt(aSP(Ag,L,M,O)))), bel(me(M)), bel(aSP(Ag,L,O,M)), bel(avail(O)), not(a-goal(aSP(X))), not(bel(receivedDropSP(Ag))), bel(seriouslyinjured(Ag)) then adopt(aSP(Ag)) + insert(havAdoptedSP(Ag)) +send(O,avail(M)).
+	
+		% 24-11-2015 wondering if above rule should be replaced with below rule with more vars in adopt(aSP(Ag)), . 19012016 changed order of args in bel received (O, adopt ...)  from Ag,L,O,M to Ag,L,M,O  Also changed bel(not(rescued) to bel(injured(Ag)) changed back 25012016
+		% 22-01-2016 changed back to adopt(aSP(Ag)) as otherwise, seems not to work, perhaps memory problem with length of goal 02082017 added send(O,avail(M)) 14082017 added bel(avail(O)) 31082017 added not(bel(receivedDropSP(Ag)))  090902017 added bel(seriouslyinjured(Ag))
+		if bel(sent(O,adopt(aSP(Ag,L,O,M)))), bel(received(O,adopt(aSP(Ag,L,M,O)))), bel(me(M)), bel(aSP(Ag,L,O,M)), not(bel(rescued(Ag))), bel(seriouslyinjured(Ag)), bel(avail(O)) ,not(bel(receivedDropSP(Ag))) then adopt(aSP(Ag)) + insert(ihavereallyAdoptedSP(Ag,L,O,M)) + send(O,avail(M)).
+	
+		%26072017 seems to be repeat of line above if bel(aSP(Ag,L,O,M)), not(bel(rescued(Ag))), bel(sent(O,adopt(aSP(Ag,L,O,M)))), bel(received(O,adopt(aSP(Ag,L,M,O)))) then adopt (aSP(Ag)) + insert(adoptaSP(Ag)).
+	
+	     %debug test to see if something is not right with the belief of a sharedplan being created correctly. 29042016 added drop(aSP(Ag))
+	     %01052016 if bel(sent(O,adopt(aSP(Ag,L,O,M)))), bel(received(O,adopt(aSP(Ag,L,M,O)))), bel(me(M)), not(bel(aSP(Ag,L,O,M))), not(bel(rescued(Ag))) then drop(aSP(Ag)) + insert(ahha).
+		
+		%22042016  01042017 modified next line to add not(bel(delegateCarryStretcher(Ag,FL,'FrontDropZone')))
+		%25042017 changed FL to 'FrontDropZone' in adopt(rescueStretcherPlan(Ag,L,O,M),  together('FrontDropZone',O,M), onStretcher(Ag)) 21072017 changed back to FL
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M), front_room(L,FL)), not(bel(delegateCarryStretcher(Ag,FL,'FrontDropZone'))), not(a-goal(rescueStretcherPlan(Ag,L,O,M),  together(FL,O,M), onStretcher(Ag))), not(bel(rescued(Ag))) then adopt(rescueStretcherPlan(Ag,L,O,M),  together(FL,O,M), onStretcher(Ag)).
+
+		%01042017 added next line so that rescue stretcher following delegation meet up is frontdropzone
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M), front_room(L,FL)), bel(delegateCarryStretcher(Ag,FL,'FrontDropZone')), not(a-goal(rescueStretcherPlan(Ag,L,O,M),  together('FrontDropZone',O,M), onStretcher(Ag))), not(bel(rescued(Ag))) then adopt(rescueStretcherPlan(Ag,L,O,M),  together('FrontDropZone',O,M), onStretcher(Ag)).
+
+		 
+		
+		% may need to accept counter plan and delete competing plan if it exists - not tested yet	
+		%23102016 uncomment next line  23122016 added not(bel(receivedDropSP(Ag))) to next line
+		%20072017 added Ag\=Ag1 09092017 added bel(seriouslyinjured(Ag))
+		if bel(sent(O,adopt(aSP(Ag,L,O,M))), received(O,adopt(aSP(Ag,L,M,O))), me(M), aSP(Ag1,L1,O1,M),Ag\=Ag1), not(a-goal(aSP(Ag1))), not(bel(rescued(Ag))), bel(seriouslyinjured(Ag)), not(bel(receivedDropSP(Ag))) then delete(aSP(Ag1,L1,O1,M)) + adopt(aSP(Ag)) + insert(aSP(Ag,L,O,M)) + insert(oops(Ag1,O1,Ag,L,O,M)) +send(O,avail(M)).
+		
+		%31082017 have already responded to this message for an old rescue, so can now delete it
+		if bel(receivedDropSP(Ag)),bel(received(O,drop(aSP(Ag,L,M,O)))) then delete(received(O,drop(aSP(Ag,L,M,O)))).
+		%25012017 added bel(aSP(Ag,L,M,O)) to next line 21072017 added drop(torescue(Ag,L,O,M))
+		%31082017 removed delete(received(O,drop(aSP(Ag,L,M,O)))) added not(bel(receivedDropSP(Ag)))
+		if bel(received(O,drop(aSP(Ag,L,M,O))), aSP(Ag,L,M,O)), not(bel(receivedDropSP(Ag))) then drop (aSP(Ag)) + drop(torescue(Ag,L,O,M)) + delete(aSP(Ag,L,O,M)) +insert(receivedDropSP(Ag)).  % 10092017 should i add : + drop(onStretcher(X), at(FL)) + drop(aSP(X)) 
+		
+		% ensure shared belief we are both together 07-02-2016 only necessary if we are both working on a sharedplan 08022016
+		if bel(together(FL,O,M), aSP(Ag,L,O,M), front_room(L,FL)) then send(O,together(FL,O,M)).  
+	
+	
+		%04022017 added + delete(received((O,together(FL,M,O))), moved this line up higher before pickups
+		%if bel(received(O,together(FL,M,O))) then insert(together(FL,O,M)) + delete(received((O,together(FL,M,O))). % ensure shared belief we are both together 07-02-2016 
+		%07022016 copied next line from medic capabilities so that it happens every cycle
+		%added check for bel(aSP ()) on next line 28032016
+		%20072017 added not(bel(rescuing(X,Ag)), X\=O) 25082017 9.46pm added bel(received(O,gotStretcher(Ag)))
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(rescueStretcherPlan(Ag,L,O,M),  together(FL,O,M), onStretcher(Ag)), not(bel(rescued(Ag))), bel(together(FL,O,M), me(M), front_room(L,FL)), bel(received(O,gotStretcher(Ag))), not(bel(rescuing(X,Ag), X\=O)) then insert(coordinateastretcherwith(O,L,Ag)) + adopt(torescue(Ag,L,O,M)).
+		%20072017 thinking about next line but it seems to stalemate, so not for now
+		%if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(rescueStretcherPlan(Ag,L,O,M),  together(FL,O,M), onStretcher(Ag)), not(bel(rescued(Ag))), bel(together(FL,O,M), me(M), front_room(L,FL)), bel(rescuing(X,Ag), X\=O) then drop(aSP(Ag)).
+		
+		%14082017 3.50pm if I have an intended rescue goal, but someone else (2 others X,Y) have informed that they are doing it too, drop it.
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M), me(M)), not(bel(rescued(Ag))), bel(rescuing(X,Ag), rescuing(Y,Ag), Y\=X, X\=O, X\=M, Y\=O, Y\=M) then drop(aSP(Ag)) + delete(aSP(Ag,L,O,M)) + send(O,drop(aSP(Ag,L,O,M))).
+		
+		%01052016 4.40pm in some cases seem to be left with overhanging a-goal(at(FL), at(O,FL))
+		if bel(together(FL,O,M), aSP(Ag,L,O,M)), a-goal(aSP(Ag)), a-goal(at(FL), at(O,FL)) then drop(at(FL), at(O,FL)).
+		
+		%09022016 if i said i will go into and my collaborating agent said also i will go into, then i will drop the goal to be at the block (only do this for the agent who saved both sharedPlans O,M and M,O)
+		%27032016 added + adopt(at(FL)) to next rule %31032016 added: + insert(waiting(FL)) + delete(waiting(L)) 02042016 added not(bel(at(L))),  05042016 added not(bel(onStretcher(Ag)
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), bel(aSP(Ag,L,M,O)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L))), bel(sent(O,iWillGoInto(L))),  not(bel(onStretcher(Ag))), not(bel(at(L))), not(bel(received(O,okiwillwaitat(FL)))) then drop(atBlock(Ag))+ drop(onStretcher(Ag), at(L), at(O, FL)) +adopt(onStretcher(Ag), at(FL)) + send(O,okiwillwaitat(FL)) +insert(waiting) + adopt(at(FL)) + goTo(FL) + insert(waiting(FL)) + delete(waiting(L)).
+		
+		%26022016 if I am confused, reset my goal to match arrangement, 31032016 added + delete (waiting(L)) 02042016 added not(bel(at(L))),  05042016 added not(bel(onStretcher(Ag)
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), bel(aSP(Ag,L,M,O)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))),  bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L))), a-goal(onStretcher(Ag), at(L), at(O, FL)), not(bel(onStretcher(Ag))), not(bel(at(L))) then drop(onStretcher(Ag), at(L), at(O, FL)) +adopt(onStretcher(Ag), at(FL)) + send(O,okiwaitat(FL)) +insert(waiting(FL)) +goTo(FL) + delete(waiting(L)).
+		
+		%03042016 seems a bug somehow that agent doesn't actually pickup when intending to so need to backtrack if not actually holding(Ag) 05042016 removed , sent(O,iwillpickup(Ag)), replaced with pickedup(Ag) 30042016 added adopt(onStretcher(...) to next line
+		%should we ignore this now? 01052016 
+		if a-goal(torescue(Ag,L,O,M)), bel(me(M), onStretcher(Ag), pickedup(Ag), front_room(L,FL)), not(bel(rescued(Ag))), not(bel(holding(Ag))) then delete(onStretcher(Ag)) + send(O,delete(onStretcher(Ag))) + adopt(onStretcher(Ag), at(L), at(O,FL)).
+		%18042016 next line added 23042016 added delete(received(O,delete(onStretcher(Ag)))) 30042016 added adopt (onStretcher...) and delete(recieved(O,iwillpickUp...)
+		if bel(received(O,delete(onStretcher(Ag))),front_room(L,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), onStretcher(Ag)), a-goal(at('FrontDropZone')) then delete(onStretcher(Ag)) + drop(at('FrontDropZone')) + delete(received(O,delete(onStretcher(Ag)))) + adopt(onStretcher(Ag), at(FL)) + delete(received(O,iwillpickUp(Ag))).		
+		if bel(received(O,delete(onStretcher(Ag)))), a-goal(torescue(Ag,L,O,M)), bel(me(M), onStretcher(Ag)) then delete(onStretcher(Ag)) + delete(received(O,delete(onStretcher(Ag)))).
+		
+		%10022016 if have a shared plan and mucked up so I think I am both going into room and waiting at front, then choose to go inside, so drop waiting
+		% may need to delete waiting?  25022016 added at(L) to a-goal below
+		if a-goal(onStretcher(Ag), at(FL)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)) then drop(onStretcher(Ag), at(FL)).
+		
+		
+		
+		%24-01-2016 added next 2 lines, 27032016 moved position of these 2 rules down from higher up
+		forall  bel(received(A, color(I,C,L))) do insert(color(I,C,L)).
+		if a-goal(onStretcher(Ag), at(FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), rescueOnStretcherLmk(Ag,L,O, M), gotStretcher(Ag), received(O,onStretcher(Ag))) then insert (onStretcher(Ag)).
+		%29012016 added next line
+		if a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), rescueOnStretcherLmk(Ag,L,O, M), gotStretcher(Ag), received(O,onStretcher(Ag))) then insert (onStretcher(Ag)).
+		
+		%05042016  if there were percept delays and I am holding Ag but not yet triggered onStretcher cause it was deleted earlier
+		if a-goal(torescue(Ag,L,O,M)), bel(me(M)), not(bel(rescued(Ag))), bel(holding(Ag)) then insert(onStretcher(Ag)) + send(O,onStretcher(Ag)). 
+		
+		
+		
+		%26022016 %if I am in the room and my partner is at front of room, then I declare gotStretcher copied from medic capabilities  12082017 added bel(received(O,gotStretcher(Ag)))
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), in(L), at(O,FL), atBlock(Ag)), not(bel(gotStretcher(Ag))), bel(received(O,gotStretcher(Ag))) then insert(gotStretcher(Ag)) +send(O,gotStretcher(Ag)).
+		%23042016  12082017 added bel(received(O,gotStretcher(Ag)))
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), at(L), at(O,FL), atBlock(Ag)), not(bel(gotStretcher(Ag))), bel(received(O,gotStretcher(Ag))) then insert(gotStretcher(Ag)) +send(O,gotStretcher(Ag)).
+		
+		%24072017 added next line
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), in(L), at(O,FL)), bel(percept(atBlock(Ag))) then insert(pUBlck(Ag)) + pickUp.
+		%29042016 moved next 3 rules from line 603 to here
+		%21042016
+		%02042017 changed order of insert and goTo on next rule 25042017 added pickUp
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), in(L), at(O,FL)) then insert(gotooBlock(Ag)) + goToBlock(Ag) + pickUp.
+		
+		%22042016
+		%02042017 remove this line (seems to be duplicating previous line)
+		%if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), front_room(L,FL), in(L), at(O,FL)), not(bel(atBlock(Ag))) then goToBlock(Ag) + insert(goToBlocck(Ag)).
+		
+		%06052016 added + delete (received(O,gotStretcher(Ag)))
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), gotStretcher(Ag), received(O,gotStretcher(Ag)), atBlock(Ag)) then pickUp  + insert(iwillpickUp(Ag)) + delete(received(O,gotStretcher(Ag))). %30042016 + insert(onStretcher(Ag)) + send(O,iwillpickup(Ag)) +send(O,onStretcher(Ag)) + send(O,!goTo('FrontDropZone')) + adopt(holding(Ag), in("DropZone")) + drop(atBlock(Ag)).
+		%06052016 copied line above but without check for received gotStretcher
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), gotStretcher(Ag), atBlock(Ag)) then pickUp  + insert(iwillpickUp(Ag)). %30042016 + insert(onStretcher(Ag)) + send(O,iwillpickup(Ag)) +send(O,onStretcher(Ag)) + send(O,!goTo('FrontDropZone')) + adopt(holding(Ag), in("DropZone")) + drop(atBlock(Ag)).
+		
+		%copied next 3 rules - repeated from line 375 to here so pick up block is more immediately
+		%05042016 copied next line from medic capabilities to here, added + drop(onStretcher(Ag), at(L), at(O,FL))
+		%06052016 added delete(received(O,gotStretcher(Ag)))
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), gotStretcher(Ag), received(O,gotStretcher(Ag)), atBlock(Ag)) then pickUp  + insert(iwillpickUp(Ag)) + delete(received(O,gotStretcher(Ag))).%01052016 + insert(onStretcher(Ag)) + send(O,iwillpickup(Ag)) +send(O,onStretcher(Ag)) + send(O,!goTo('FrontDropZone')) + drop(atBlock(Ag)) + drop(onStretcher(Ag), at(L), at(O,FL)).
+		
+		%06052016 not sure how situation arises where we didn't save gotStretcher but seemed to occur
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), in(L), received(O,gotStretcher(Ag))) then delete(received(O,gotStretcher(Ag))) + insert(gotStretcher(Ag)).
+		
+		%05042016 took + adopt(holding(Ag), in("DropZone"))  from above line into separate rule. 24042016 removed bel(in(L), from next 2 rules
+		%31032017 added not(a-goal(together(FL,O,M))), to next rule so that it works with stretcher delegation 21072017 removed it again
+		if a-goal(aSP(Ag)), a-goal(torescue(Ag,L,O,M)),  bel(me(M), onStretcher(Ag), holding(Ag)) then adopt(holding(Ag), in("DropZone")) + insert(onStretcherRescueunderway(Ag)).
+		if a-goal(aSP(Ag)), a-goal(onStretcher(Ag), at(FL)), a-goal(torescue(Ag,L,O,M)), bel(me(M), onStretcher(Ag)) then adopt(at("FrontDropZone")) + drop(onStretcher(Ag), at(FL)) + insert(onStretcherRescuegoingahead(Ag)).
+		
+		%10032016 added not(bel(rescued(Ag))),   to next line  28032016 added not(holding(Ag)) to next line  29032016 added not(bel(onStretcher(Ag))), 04042016 removed not(at(L)) as condition because it causes the goal adoption to reverse as soon as at(L) is true, 05042016 added not(bel(atBlock(Ag)))
+		%06052016 changed + adopt(atBlock(Ag)) on next line to adopt(holding(Ag), in('DropZone'))
+		if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))),  bel(me(M), front_room(L,FL)), not(bel(holding(Ag))), not(bel(atBlock(Ag))), not(bel(onStretcher(Ag))) then goTo(L)  + adopt(holding(Ag), in('DropZone')) + insert(illgoTo(L)).  %+adopt(atBlock(Ag))
+		
+		%30032016 if agent thinks it is going into the room, but the other agent is already in the room, swap to role of waiting outside 31032016 added insert(waitat(FL))  21042016 added + drop(atBlock(Ag)) and also added check for not(bel(gotStretcher(Ag))
+		%22042016 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL)), not(bel(at(L))), bel(at(O,L)), not(bel(gotStretcher(Ag))), not(bel(holding(Ag), onStretcher(Ag))) then drop(onStretcher(Ag), at(L), at(O,FL) )   + adopt (onStretcher(Ag), at(FL)) + insert(swaproles) + drop(atBlock(Ag)) + send(O,iwillwaitat(FL)) + insert(waitat(FL)) + insert(waiting(FL)).
+		
+		%30032016 21042016 added not(bel(gotStretcher(Ag))
+		%22042016 perhaps should move this to medic capabilities in rescue together module: if bel(received(O,iwillwaitat(FL))), a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(onStretcher(Ag), at(FL)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), not(bel(gotStretcher(Ag))), bel(me(M), front_room(L,FL)), not(bel(at(L))), not(bel(onStretcher(Ag))) then drop(onStretcher(Ag), at(FL)) + adopt(onStretcher(Ag), at(L), at(O,FL)) + insert(swapproles) + send(O,iwillGoInto(L)).
+		
+		%02032016 next 20 lines copied from medic capabilities so that they will occur every time, 06032016 not sure we want all of them here comment out some for now
+		% both agents together at FL, I will go inside the room (expect other agent to wait at front)
+		%03-12-2015 changed aSP(Ag) to aSP(Ag,L,O,M) on next line  19012016 changed not(bel(rescued() to bel(injured()
+		%22-1-2016 added not(bel(sent(O,iWillGoInto(L)))
+		%so both agents don't simultaneously wait, only do it if you were the agent who stored both versions of the sharedplan O,M and M,O
+		%06032016 comment out next line, 30032016 put this line back in, 31032016 added + insert(waiting(FL)), 02042016 added not(bel(at(L))), 05042016 added not(bel(onStretcher(Ag) 21042016 added not(bel(gotStretcher(Ag))
+		%22042016 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), bel(aSP(Ag,L,M,O)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L))), not(bel(sent(O,iWillGoInto(L)))), not(bel(onStretcher(Ag))), not(bel(at(L))), not(bel(gotStretcher(Ag)))  then adopt(onStretcher(Ag), at(FL)) + send(O,iwillwaitat(FL)) +insert(waiting) + insert(waiting(FL)).
+		
+		%01022016 added next 2 lines to cope with situation where both agents simultaneously send message to each other saying iWillGoInto
+		%0403 added not(received(gotStretcher(Ag))) , still not helpful here, so just leave it in medic capabilities comment out here 04032016
+		%if bel(received(O,iWillGoInto(L)), received(O,ishouldwaitat(FL)), front_room(L,FL), not(received(O,gotStretcher(Ag)))) then delete %(received(O,iWillGoInto(L))) + insert(ignorethatyougointo(L)).
+		
+		%13032016 remove + insert(waiting) on next line %24032016 bug fix remove ( before sent, 27032016 added +insert(waiting(FL))
+		%29032016 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L)), sent(O,iWillGoInto(L))), not(bel(received(O,imp(wait(FL))))), not(bel(received(O,ishouldwaitat(FL))))  then drop (onStretcher(Ag), at(L), at(O, FL)) + adopt(onStretcher(Ag), at(FL)) + send(O,ishouldwaitat(FL)) +insert(waiting(FL)). 
+		%07022016 if i said i will go into and my collaborating agent said also i will go into, then i will drop the goal to be at the block (only do this for the agent who saved both sharedPlans O,M and M,O)
+		%13032016 remove + insert(waiting) on next line . 27032016 added +insert(waiting(FL))  31032016 added delete(waiting(L)) 02042016 should i add not(bel(at(L))),  to next line?. 05042016 added not(bel(onStretcher(Ag), at(L))
+		%220420216 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), not(bel(onStretcher(Ag))), not(bel(at(L))), bel(aSP(Ag,L,M,O)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L))), bel(sent(O,iWillGoInto(L))), not(bel(received(O,okiwillwaitat(FL)))) then drop(atBlock(Ag))+ drop(onStretcher(Ag), at(L), at(O, FL)) +adopt(onStretcher(Ag), at(FL)) + send(O,okiwillwaitat(FL)) + goTo(FL) + insert(waiting(FL)) + delete(waiting(L)). 
+		
+		%03-12-2015 changed aSP(Ag) to aSP(Ag,L,O,M) on next 2 lines  19012016 changed not(bel(rescued() to bel(injured() 25012016 changed back
+		%22042016 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M)), not(bel(received(O,iWillGoInto(L)))), not(bel(onStretcher(Ag), at(L))) then drop (at(O,FL), at(FL)) + adopt(onStretcher(Ag), at(L), at(O,FL))  + send(O,iWillGoInto(L)). % 08022016 + send(O,!wait(FL))  %%is this causing problems
+		%13032016 remove insert(waiting) on next line, 31032016 added not(bel(onStretcher(Ag))) and  goTo(FL) + insert(waiting(FL)). 05042016 added at(FL) in with not(bel(onStretcher
+		%22042016 if a-goal(aSP(Ag)), bel(aSP(Ag,L,O,M)), a-goal(torescue(Ag,L,O,M)), not(bel(rescued(Ag))), bel(me(M), front_room(L,FL), together(FL,O,M), received(O,iWillGoInto(L))), not(bel(sent(O,iWillGoInto(L)))), not(bel(onStretcher(Ag))), not(bel(at(FL)))  then adopt(onStretcher(Ag), at(FL)) + send(O,ishouldwaitat(FL)) + + goTo(FL) + insert(waiting(FL)). 
+		%if a-goal(rescueOnStretcherGoal(I,L,M, O), torescue(Ag,L,O,M) ), bel(me(M), rescueOnStretcherLmk(Ag,L,O, M), front_room(L,FL), at(O,L), at(FL) ) then insert(onStretcher(Ag)) +send(O,onStretcher(Ag)).
+	
+	  %15042016 moved next 5 lines down to here from around line 617
+		%24022016 if we both think we are going into the room, the agent in the room should adopt that role.
+		%06032016 comment out next line, 30032016 put next line back in, added delete(received...) 02042016 changed in(L) to at(L)
+		if bel(sent(O,iWillGoInto(L)), received(O,iwillGoInto(L)), aSP(Ag,L,O,M), at(L)), a-goal(onStretcher(Ag) , at(L) , at(O,FL)) then send(O,youwaitat(FL)) + insert(youwait(O)) + delete(received(O,iwillGoInto(L))).
+		%05042016 added not(bel(onStretcher(Ag), not(bel(at(L)))
+		%23042016 if bel(aSP(Ag,L,O,M), me(M)), a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(at(O,L), received(O,youwaitat(FL))), not(bel(rescued(Ag))), not(bel(onStretcher(Ag))), not(bel(at(L))) then drop (onStretcher(Ag) , at(L) , at(O,FL)) + adopt(onStretcher(Ag), at(FL)) +insert(allowtopickup(O)).
+		
+		
+		%02032016,03032016 copied next 3 lines to aware medic 11032016 moved these 3 lines higher up from line 516 to 412
+		% if we had a goal to rescue and I have injured agent ready to drop off, then if you are waiting at frontdropzone, then I will consider drop ready and putdown injured agent. 19022016 added +insert rescued(Ag) to next line 03032016 added + send(O,rescued(Ag)) to next line 10-03-2016 removed + goTo('FrontDropZone')  from next line 27012017 add  + send(O,rescued(Ag)) delete(avail(O))   
+		if a-goal(torescue(Ag,L,O,M)), bel(holding(Ag), me(M), at('DropZone'), at(O,'FrontDropZone')) then putDown +  insert(iputdownDropZone(Ag)) + insert(rescuedtogether(Ag)) + insert(injuredRescued(Ag)) + drop(torescue(Ag,L,O,M))  + send(O,rescued(Ag)) + . %10032016 + insert(rescued(Ag)) + send(O, rescued(Ag)) + delete(avail(O)).
+		%10032016 if a-goal(torescue(Ag,L,O,M)), bel(at(O,'DropZone'), at('FrontDropZone')) then insert(rescuedtogether(Ag)) +insert(injuredRescued(Ag)) +drop(torescue(Ag,L,O,M)).
+		
+		%10032016 next 3 lines added
+		if  a-goal(rescueStretcherPlan(Ag,L,O,M), together(FL,O,M), onStretcher(Ag)), bel(rescued(Ag)) then drop (rescueStretcherPlan(Ag,L,O,M), together(FL,O,M), onStretcher(Ag)).
+		if a-goal(onStretcher(Ag), at(L), at(O,FL)), bel(rescued(Ag)) then drop(onStretcher(Ag), at(L), at(O,FL)).
+		if a-goal(onStretcher(Ag), at(FL)), bel(rescued(Ag)) then drop (onStretcher(Ag), at(FL)). 
+		%09092016 fixed typo rescueOnStretcherGoal was missing the capital O for On
+		if a-goal(rescueOnStretcherGoal(N,L,M,O)), bel(rescued(N)) then drop(rescueOnStretcherGoal(N,L,M,O)).
+		
+		
+		%do we need the together(), onStretcher() on next line? 18082015  
+		%10032016  if a-goal(rescueOnStretcherGoal(Ag,L,M, O), together(FL,O,M), onStretcher(Ag)), bel(injured(Ag)),  bel(me(M),  rescueStretcherPlan(Ag,L,O, M), front_room(L,FL)) then send(O, adopt(rescueStretcherPlan(Ag,L,O,M), together(FL,O,M), onStretcher(Ag))).
+		%10032016 replaced above line with this line below %21042016 removed this next line was at line 544
+		%if a-goal(rescueOnStretcherGoal(Ag,L,M,O)), bel(injured(Ag)),  bel(me(M),  rescueStretcherPlan(Ag,L,O,M), front_room(L,FL)) then send(O, adopt(rescueStretcherPlan(Ag,L,O,M), together(FL,O,M), onStretcher(Ag))).
+		
+		%07052016 add this line to remove hanging goal to be at a room where rescue no longer needed
+		if a-goal(at(R)), bel(room(R)), not(bel(injuredLocatedAt(Ag,R))) then drop(at(R)).
+		%09122016
+		if a-goal(at(R)), bel(room(R)), not(bel(injuredLocatedAt(Ag,R))) then drop(at(R)).
+		
+		%13082017 
+		if a-goal(holding(Ag) , in('DropZone')), bel(injuredLocatedAt(Ag,R), percept(at(R))), not(bel(holding(Y))) then goToBlock(Ag). 
+		%04082017 added not bel holding Y to next 2 rules
+		if a-goal(holding(Ag) , in('DropZone')), bel(injuredLocatedAt(Ag,R), percept(in(R))), not(bel(holding(Y))) then goToBlock(Ag). %14122016
+		if a-goal(holding(Ag) , in('DropZone')), not(bel(holding(Y))), bel(percept(atBlock(Ag))) then pickUp. %16122016
+		if a-goal(holding(Ag) , in('DropZone')), bel(holding(Ag)) then goTo('DropZone').
+		if a-goal(holding(Ag) , in('DropZone')), bel(injuredLocatedAt(Ag,R)), not(bel(holding(B))) then adopt(at(R)). %09122016 1612 added notbel holding B
+		if a-goal(at(R)), bel(room(R)), bel(injuredLocatedAt(Ag,R)), not(bel(holding(C))) then goTo(R).%16122016 added not bel holding B
+		%24012017 added next line
+		if a-goal(holding(A), in ('DropZone')), not(bel(at(R))), bel(injuredLocatedAt(A,R), at(FR), front_room(R, FR), at(O,R)) then clearRoom(R).
+		
+	}	
+}
+
+
