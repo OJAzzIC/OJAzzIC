@@ -1,0 +1,17 @@
+S 30 40
+R 15 15 10 10 Red 
+D 15 10 H 15 15
+Z 15 35 15 10 Red 
+E medic1 15 25
+E officer1 15 35
+E ajax 15 5
+E feye 15 5
+N RoomA1 15 15 FrontRoomA1
+N FrontRoomA1 15 5 RoomA1 LeftHallA RightHallA
+N LeftHallA 5 5 LeftHallB FrontRoomA1
+N RightHallA 25 5 RightHallB FrontRoomA1
+N DropZone 15 35 FrontDropZone
+D 15 30 H 15 35
+N FrontDropZone 15 25 DropZone LeftHallB RightHallB
+N LeftHallB 5 25 FrontDropZone LeftHallA
+N RightHallB 25 25 FrontDropZone RightHallA
